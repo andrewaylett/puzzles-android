@@ -1,4 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-  <color name="ic_launcher_background">#3F5185</color>
+  <!-- The collection's own puzzle-grid background tone, sampled from its Icon@2x.png. -->
+  <color name="ic_launcher_background">#AAA69D</color>
 </resources>

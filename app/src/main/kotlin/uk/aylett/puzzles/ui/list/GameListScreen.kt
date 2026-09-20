@@ -15,6 +15,7 @@
  */
 package uk.aylett.puzzles.ui.list
 
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -22,9 +23,11 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Extension
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -39,6 +42,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -79,8 +83,20 @@ fun GameListScreen(
           contentPadding = PaddingValues(bottom = 16.dp),
         ) {
           items(uiState.visibleGames, key = GameInfo::index) { game ->
+            val icon = iconFor(game.name)
             ListItem(
               headlineContent = { Text(game.name) },
+              leadingContent = {
+                if (icon != null) {
+                  Image(
+                    painter = painterResource(icon),
+                    contentDescription = null,
+                    modifier = Modifier.size(40.dp),
+                  )
+                } else {
+                  Icon(Icons.Filled.Extension, contentDescription = null)
+                }
+              },
               modifier =
                 Modifier
                   .fillMaxWidth()

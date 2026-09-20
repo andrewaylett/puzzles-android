@@ -193,6 +193,27 @@ carry their own game identity, which `wasmmid_identify_game` can sniff without d
 upstream's `list.c` ordering and will shift the moment upstream adds a puzzle, silently reopening
 the wrong game from a stale preference.
 
+## Vendored icon artwork
+
+`app/src/main/res/drawable-nodpi/ic_game_*.png` and `puzzles_icon_montage.png` are the upstream
+collection's own artwork — per-puzzle icons from its `icons/*-96d24@2x.png` and the app montage
+from its `Icon@2x.png`/`iTunesArtwork.png` — copied unmodified from
+<https://github.com/x-sheep/puzzles> (an actively-synced mirror of the `git.tartarus.org` source;
+GitHub has no first-party mirror). Both are covered by the project's own MIT-style `LICENCE`, same
+as `engine/wasm/puzzles-midend.wasm`.
+
+They map from `GameInfo.name` (the mid-end's display name) via `GameIcons.kt`, keyed by name
+because the mid-end exposes no internal slug — most names differ from their icon filename only in
+case and spacing, except `rect`, whose icon keeps the historical short name despite the game's
+display name being "Rectangles". Two games added after that icon set was last regenerated upstream
+— Mosaic and Palisade — have no matching file and fall back to a generic icon.
+
+The three Undead key icons (`ic_key_ghost.xml`, `ic_key_vampire.xml`, `ic_key_zombie.xml`) are
+original vector artwork, not vendored — they're redrawn from the shapes and colours visible in the
+upstream montage rather than copied from any Android port, to sidestep the ambiguous licensing note
+on the one prior Android port's own icon set ("does not apply to the additional graphics
+distributed in the Google Play Store version").
+
 ## Conventions
 
 - Kotlin throughout, `ktlint_official` style, 2-space indent, 100-column lines, no wildcard imports.

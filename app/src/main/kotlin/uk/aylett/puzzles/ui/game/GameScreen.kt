@@ -301,7 +301,7 @@ fun GameScreen(
         )
       }
 
-      KeyRow(hints = uiState.keyHints, onKey = viewModel::key)
+      KeyRow(hints = uiState.keyHints, onKey = viewModel::key, gameName = uiState.game?.name)
     }
   }
 
