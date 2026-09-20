@@ -1,0 +1,505 @@
+/*
+ * Copyright 2026 Andrew Aylett
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+package uk.aylett.puzzles.engine
+
+import android.util.Log
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
+import uk.aylett.puzzles.engine.render.BitmapDrawingSink
+
+private const val LOG_TAG = "PuzzleSession"
+
+/** How often [WasmMidend.timer] is ticked while the mid-end wants a timer running. */
+private const val TIMER_INTERVAL_MS = 50L
+
+/**
+ * One game in progress: a `midend *` handle, the surface it draws into, and the published
+ * [PuzzleFrame]s the UI observes.
+ *
+ * Everything that touches the mid-end runs on [engineThread]. [EngineHooks] is shared with every
+ * other session on the same [PuzzleEngine], but only one session is ever "the one making a call"
+ * at a time (calls are fully serialised), so installing this session's callbacks there for the
+ * duration of its lifetime is enough — no per-call routing is needed.
+ */
+class PuzzleSession internal constructor(
+  private val engineThread: EngineThread,
+  private val hooks: EngineHooks,
+  private val midend: WasmMidend,
+  private val me: Int,
+  val game: GameInfo,
+) : AutoCloseable {
+  private val _frames = MutableStateFlow(PuzzleFrame(bitmap = null))
+  val frames: StateFlow<PuzzleFrame> = _frames.asStateFlow()
+
+  private val sink =
+    BitmapDrawingSink(
+      onFrame = { bitmap -> publish { it.copy(bitmap = bitmap) } },
+      onStatus = { text -> publish { it.copy(statusText = text) } },
+    )
+
+  // The mid-end asserts rather than returning an error if asked to draw, report a status or hand
+  // back a game id before a game exists (`me->desc` is NULL until then), and an assert inside WASM
+  // surfaces as an opaque "unreachable" trap. A session is deliberately created without generating
+  // a game, so that the UI can restore a saved one instead of paying to generate a throwaway, and
+  // this flag is what keeps that state legal.
+  private var hasGame = false
+
+  // The space the UI last offered us, remembered so that a change of parameters can re-run the
+  // mid-end's sizing without waiting for a layout pass that will never come.
+  private var viewportWidth = 0
+  private var viewportHeight = 0
+
+  private var paused = false
+  private var timerWanted = false
+  private var timerJob: Job? = null
+  private var timerStartNanos = 0L
+
+  init {
+    hooks.drawingSink = sink
+    hooks.onActivateTimer = ::onActivateTimer
+    hooks.onDeactivateTimer = ::onDeactivateTimer
+    hooks.onIdsChanged =
+      { /* Nothing is cached from the id/seed today; ready for a future need. */ }
+  }
+
+  /**
+   * Bumps [PuzzleFrame.frameSeq] on every publish. Bitmap buffers are recycled rather than
+   * reallocated, so the same instance comes back with new pixels, and Compose's equality-based
+   * state comparison needs an explicit marker to notice.
+   */
+  private fun publish(transform: (PuzzleFrame) -> PuzzleFrame) {
+    _frames.update { transform(it).copy(frameSeq = it.frameSeq + 1) }
+  }
+
+  private fun syncMeta() {
+    if (!hasGame) return
+    publish {
+      it.copy(
+        canUndo = midend.canUndo(me),
+        canRedo = midend.canRedo(me),
+        status = midend.status(me),
+        gameId = midend.getGameId(me),
+      )
+    }
+  }
+
+  private fun applyPalette() {
+    val rgb = midend.colours(me)
+    val packed =
+      IntArray(rgb.size / 3) { i ->
+        val r = (rgb[i * 3] * 255f).toInt().coerceIn(0, 255)
+        val g = (rgb[i * 3 + 1] * 255f).toInt().coerceIn(0, 255)
+        val b = (rgb[i * 3 + 2] * 255f).toInt().coerceIn(0, 255)
+        (0xFF shl 24) or (r shl 16) or (g shl 8) or b
+      }
+    sink.setPalette(packed)
+  }
+
+  private fun redrawAndSync() {
+    if (!hasGame) return
+    midend.redraw(me)
+    syncMeta()
+  }
+
+  /**
+   * Generates a game, and records that one now exists.
+   *
+   * Every route to a playable state goes through here or through a successful restore, so that
+   * [hasGame] cannot drift out of step with the mid-end.
+   */
+  private fun startNewGame() {
+    midend.newGame(me)
+    hasGame = true
+  }
+
+  private fun setBusy(busy: Boolean) {
+    publish { it.copy(busy = busy) }
+  }
+
+  /**
+   * Re-runs the mid-end's sizing for the current viewport and parameters.
+   *
+   * This has to happen whenever the *parameters* change as well as whenever the viewport does: a
+   * different preset means a different grid, hence a different tile size and surface. Upstream
+   * does the same thing — `menu_config_event` in `gtk.c` calls `resize_fe()` immediately after
+   * `midend_new_game()`. Miss it and the new game is drawn at the old tile size into a surface
+   * sized for the old parameters, which `Canvas` silently clips.
+   *
+   * `user_size = true` makes the mid-end search for the *largest* tile size that fits, rather than
+   * capping at the game's preferred size; the preferred size is tuned for a desktop window and
+   * leaves a small grid as a postage stamp on a phone. What it returns is what it will actually
+   * draw — usually a little smaller than offered — so the surface is allocated to that.
+   */
+  private fun applySize() {
+    // midend_size finishes by calling the back end's set_size on the current draw state, and
+    // midend_new leaves that NULL until a game exists — so sizing before generating hands the back
+    // end a NULL draw state. Upstream orders it the other way round for exactly this reason
+    // (emcc.c creates the game, *then* sets the canvas size). The games that keep blitters —
+    // Inertia, Map, Pegs and Signpost — are the ones that notice, via an assert in set_size.
+    if (!hasGame) return
+    if (viewportWidth <= 0 || viewportHeight <= 0) return
+    val (drawWidth, drawHeight) =
+      midend.size(me, viewportWidth, viewportHeight, userSize = true)
+    sink.resize(drawWidth, drawHeight)
+  }
+
+  suspend fun resize(
+    widthPx: Int,
+    heightPx: Int,
+  ) = engineThread.run {
+    // Recorded even when there is no game yet: whichever call generates the first one will size it
+    // to this viewport, so an early resize is remembered rather than lost.
+    viewportWidth = widthPx
+    viewportHeight = heightPx
+    if (!hasGame) return@run
+    applySize()
+    applyPalette()
+    midend.forceRedraw(me)
+    redrawAndSync()
+  }
+
+  suspend fun newGame() =
+    engineThread.run {
+      setBusy(true)
+      startNewGame()
+      applySize()
+      applyPalette()
+      midend.forceRedraw(me)
+      redrawAndSync()
+      setBusy(false)
+    }
+
+  suspend fun restart() =
+    engineThread.run {
+      midend.restartGame(me)
+      redrawAndSync()
+    }
+
+  suspend fun undo() =
+    engineThread.run {
+      midend.processKey(me, 0, 0, Buttons.UI_UNDO)
+      redrawAndSync()
+    }
+
+  suspend fun redo() =
+    engineThread.run {
+      midend.processKey(me, 0, 0, Buttons.UI_REDO)
+      redrawAndSync()
+    }
+
+  /** @return an error message, or null on success. */
+  suspend fun solve(): String? =
+    engineThread.run {
+      setBusy(true)
+      val error = midend.solve(me)
+      redrawAndSync()
+      setBusy(false)
+      error
+    }
+
+  suspend fun pointer(
+    action: PointerAction,
+    button: PointerButton,
+    x: Int,
+    y: Int,
+  ) = engineThread.run {
+    midend.processKey(me, x, y, buttonCode(action, button))
+    redrawAndSync()
+  }
+
+  suspend fun key(button: Int) =
+    engineThread.run {
+      midend.processKey(me, 0, 0, button)
+      redrawAndSync()
+    }
+
+  suspend fun presets(): List<PresetEntry> =
+    engineThread.run {
+      val menu = midend.getPresets(me)
+      readPresetMenu(menu)
+    }
+
+  private fun readPresetMenu(menu: Int): List<PresetEntry> {
+    if (menu == 0) return emptyList()
+    val n = midend.presetMenuNEntries(menu)
+    return (0 until n).map { i ->
+      val title = midend.presetMenuEntryTitle(menu, i)
+      val submenu = midend.presetMenuEntrySubmenu(menu, i)
+      if (submenu != 0) {
+        PresetEntry.Submenu(title, readPresetMenu(submenu))
+      } else {
+        PresetEntry.Preset(title, midend.presetMenuEntryId(menu, i))
+      }
+    }
+  }
+
+  suspend fun currentPresetId(): Int = engineThread.run { midend.whichPreset(me) }
+
+  suspend fun applyPreset(id: Int) =
+    engineThread.run {
+      setBusy(true)
+      val menu = midend.getPresets(me)
+      val params = midend.presetMenuLookupById(menu, id)
+      midend.setParams(me, params)
+      startNewGame()
+      applySize()
+      applyPalette()
+      midend.forceRedraw(me)
+      redrawAndSync()
+      setBusy(false)
+    }
+
+  suspend fun config(section: Int): ConfigForm =
+    engineThread.run {
+      val (cfg, title) = midend.getConfig(me, section)
+      try {
+        ConfigForm(title, readConfigFields(cfg))
+      } finally {
+        midend.freeCfg(cfg)
+      }
+    }
+
+  private fun readConfigFields(cfg: Int): List<ConfigField> {
+    val fields = mutableListOf<ConfigField>()
+    var i = 0
+    while (true) {
+      val type = midend.configItemType(cfg, i)
+      if (type == ConfigType.END) break
+      val name = midend.configItemName(cfg, i)
+      val keyword = midend.configItemKw(cfg, i)
+      fields +=
+        when (type) {
+          ConfigType.STRING -> {
+            ConfigField.Text(name, keyword, midend.configItemStringValue(cfg, i))
+          }
+
+          ConfigType.BOOLEAN -> {
+            ConfigField.Toggle(name, keyword, midend.configItemBoolValue(cfg, i))
+          }
+
+          ConfigType.CHOICES -> {
+            val raw = midend.configItemChoices(cfg, i)
+            val delimiter = raw.first()
+            val options = raw.substring(1).split(delimiter)
+            ConfigField.Choice(name, keyword, options, midend.configItemChoiceSelected(cfg, i))
+          }
+
+          else -> {
+            error("unexpected config_item type $type at index $i")
+          }
+        }
+      i++
+    }
+    return fields
+  }
+
+  /** @return an error message, or null on success. */
+  suspend fun applyConfig(
+    section: Int,
+    fields: List<ConfigField>,
+  ): String? =
+    engineThread.run {
+      val (cfg, _) = midend.getConfig(me, section)
+      try {
+        fields.forEachIndexed { i, field ->
+          when (field) {
+            is ConfigField.Text -> midend.configItemSetString(cfg, i, field.value)
+            is ConfigField.Toggle -> midend.configItemSetBool(cfg, i, field.value)
+            is ConfigField.Choice -> midend.configItemSetChoice(cfg, i, field.selected)
+          }
+        }
+        val error = midend.setConfig(me, section, cfg)
+        if (error == null) {
+          // midend_set_config only records the new settings; it never generates. Upstream's own
+          // front ends call midend_new_game afterwards for every section except preferences (see
+          // menu_config_event in gtk.c), and preferences are excluded because they change only how
+          // an existing game is presented, not what it is.
+          if (section != ConfigSection.PREFS) {
+            setBusy(true)
+            startNewGame()
+            applySize()
+            applyPalette()
+            midend.forceRedraw(me)
+            setBusy(false)
+          }
+          redrawAndSync()
+        }
+        error
+      } finally {
+        midend.freeCfg(cfg)
+      }
+    }
+
+  suspend fun keyHints(): List<KeyHint> =
+    engineThread.run {
+      val (keys, n) = midend.requestKeys(me)
+      try {
+        (0 until n).map { i ->
+          val button = midend.keyLabelButton(keys, i)
+          val text = midend.keyLabelText(keys, i) ?: midend.currentKeyLabel(me, button)
+          KeyHint(text, button)
+        }
+      } finally {
+        midend.freeKeys(keys, n)
+      }
+    }
+
+  /** @return the current game's id, or an empty string if no game has been generated yet. */
+  suspend fun gameId(): String = engineThread.run { if (hasGame) midend.getGameId(me) else "" }
+
+  /** @return an error message, or null on success. */
+  suspend fun setGameId(id: String): String? =
+    engineThread.run {
+      setBusy(true)
+      // midend_game_id only parses and stores the id; it does not generate. Upstream always
+      // follows a successful call with midend_new_game (see gtk.c), and without it the mid-end is
+      // left with a description but no game, which asserts the moment anything tries to draw.
+      val error = midend.gameId(me, id)
+      if (error == null) {
+        startNewGame()
+        applySize()
+        applyPalette()
+        midend.forceRedraw(me)
+        redrawAndSync()
+      }
+      setBusy(false)
+      error
+    }
+
+  suspend fun textFormat(): String? =
+    engineThread.run {
+      if (!midend.canFormatAsTextNow(me)) null else midend.textFormat(me)
+    }
+
+  suspend fun serialise(): ByteArray = engineThread.run { midend.serialise(me) }
+
+  /** @return an error message, or null on success. */
+  suspend fun deserialise(bytes: ByteArray): String? =
+    engineThread.run {
+      setBusy(true)
+      val error = midend.deserialise(me, bytes)
+      if (error == null) {
+        // A restored save *is* a game, so this is the other legitimate route to hasGame.
+        hasGame = true
+        applySize()
+        applyPalette()
+        midend.forceRedraw(me)
+        redrawAndSync()
+      }
+      setBusy(false)
+      error
+    }
+
+  suspend fun savePrefs(): ByteArray = engineThread.run { midend.savePrefs(me) }
+
+  suspend fun loadPrefs(bytes: ByteArray) =
+    engineThread.run {
+      // wasmmid_load_prefs can report an error, but loadPrefs has no error channel of its own since
+      // bad/foreign prefs are not something the UI needs to act on: log it so it isn't silent.
+      val error = midend.loadPrefs(me, bytes)
+      if (error != null) {
+        Log.w(LOG_TAG, "loadPrefs: $error")
+      }
+    }
+
+  /** Stops or starts the ~20Hz timer tick as the activity comes and goes. */
+  fun setPaused(paused: Boolean) {
+    this.paused = paused
+    if (paused) {
+      stopTimerJob()
+    } else {
+      maybeStartTimer()
+    }
+  }
+
+  private fun onActivateTimer() {
+    timerWanted = true
+    maybeStartTimer()
+  }
+
+  private fun onDeactivateTimer() {
+    timerWanted = false
+    stopTimerJob()
+  }
+
+  private fun maybeStartTimer() {
+    if (!timerWanted || paused || timerJob != null) return
+    timerStartNanos = System.nanoTime()
+    timerJob =
+      engineThread.scope.launch {
+        while (isActive) {
+          delay(TIMER_INTERVAL_MS)
+          // midend_timer takes the time since the *previous* tick, not since the timer started:
+          // it does `me->anim_pos += tplus`. Passing cumulative time would race every animation to
+          // its end and make in-game clocks (Mines, Inertia) run quadratically fast.
+          val now = System.nanoTime()
+          val delta = (now - timerStartNanos) / 1_000_000_000f
+          timerStartNanos = now
+          midend.timer(me, delta)
+          redrawAndSync()
+        }
+      }
+  }
+
+  private fun stopTimerJob() {
+    timerJob?.cancel()
+    timerJob = null
+  }
+
+  private fun buttonCode(
+    action: PointerAction,
+    button: PointerButton,
+  ): Int {
+    val base =
+      when (button) {
+        PointerButton.LEFT -> 0
+        PointerButton.MIDDLE -> 1
+        PointerButton.RIGHT -> 2
+      }
+    // LEFT_BUTTON, MIDDLE_BUTTON, RIGHT_BUTTON, then the same order for _DRAG, then _RELEASE: see
+    // the Buttons object.
+    val offset =
+      when (action) {
+        PointerAction.DOWN -> 0
+        PointerAction.DRAG -> 3
+        PointerAction.UP -> 6
+      }
+    return Buttons.LEFT_BUTTON + base + offset
+  }
+
+  /**
+   * Frees the mid-end handle and detaches from [hooks]. Blocks the calling thread briefly, hopping
+   * onto the engine thread to do it: [AutoCloseable.close] has no suspend variant, and a `midend *`
+   * must only ever be freed from the thread that owns the instance.
+   */
+  override fun close() {
+    stopTimerJob()
+    runBlocking(engineThread.dispatcher) {
+      if (hooks.drawingSink === sink) hooks.drawingSink = null
+      hooks.onActivateTimer = null
+      hooks.onDeactivateTimer = null
+      hooks.onIdsChanged = null
+      midend.midendFree(me)
+    }
+  }
+}
