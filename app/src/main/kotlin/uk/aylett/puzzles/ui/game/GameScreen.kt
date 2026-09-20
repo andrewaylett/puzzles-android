@@ -27,6 +27,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.Redo
 import androidx.compose.material.icons.automirrored.filled.Undo
+import androidx.compose.material.icons.filled.GridView
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.CircularProgressIndicator
@@ -182,6 +183,12 @@ fun GameScreen(
               contentDescription = stringResource(R.string.action_redo),
             )
           }
+          IconButton(onClick = { activeDialog = ActiveDialog.PRESETS }) {
+            Icon(
+              Icons.Filled.GridView,
+              contentDescription = stringResource(R.string.action_type),
+            )
+          }
           IconButton(onClick = { menuExpanded = true }) {
             Icon(Icons.Filled.MoreVert, contentDescription = null)
           }
@@ -197,10 +204,6 @@ fun GameScreen(
             onSolve = {
               menuExpanded = false
               viewModel.solve()
-            },
-            onType = {
-              menuExpanded = false
-              activeDialog = ActiveDialog.PRESETS
             },
             onCustom = {
               menuExpanded = false
@@ -342,7 +345,6 @@ private fun GameOverflowMenu(
   onDismiss: () -> Unit,
   onRestart: () -> Unit,
   onSolve: () -> Unit,
-  onType: () -> Unit,
   onCustom: () -> Unit,
   onPreferences: () -> Unit,
   onEnterGameId: () -> Unit,
@@ -358,7 +360,6 @@ private fun GameOverflowMenu(
     if (canSolve) {
       DropdownMenuItem(text = { Text(stringResource(R.string.action_solve)) }, onClick = onSolve)
     }
-    DropdownMenuItem(text = { Text(stringResource(R.string.action_type)) }, onClick = onType)
     if (canConfigure) {
       DropdownMenuItem(
         text = { Text(stringResource(R.string.action_custom)) },
