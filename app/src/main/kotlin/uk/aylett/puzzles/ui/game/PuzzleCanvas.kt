@@ -28,6 +28,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.input.pointer.AwaitPointerEventScope
+import androidx.compose.ui.input.pointer.PointerEventTimeoutCancellationException
 import androidx.compose.ui.input.pointer.PointerId
 import androidx.compose.ui.input.pointer.PointerInputChange
 import androidx.compose.ui.input.pointer.changedToUp
@@ -102,17 +103,18 @@ fun PuzzleCanvas(
 
               is GestureResolution.LongPress -> {
                 send(PointerAction.DOWN, holdButton, down.position)
-                trackUntilRelease(down.id) { change ->
-                  send(PointerAction.UP, holdButton, change.position)
-                }
+                val up = consumeUntilRelease(down.id)
+                send(PointerAction.UP, holdButton, up.position)
               }
 
               is GestureResolution.Drag -> {
                 send(PointerAction.DOWN, PointerButton.LEFT, down.position)
                 send(PointerAction.DRAG, PointerButton.LEFT, resolution.change.position)
-                trackUntilRelease(down.id) { change ->
-                  send(PointerAction.DRAG, PointerButton.LEFT, change.position)
-                }
+                val up =
+                  trackDragUntilRelease(down.id) { change ->
+                    send(PointerAction.DRAG, PointerButton.LEFT, change.position)
+                  }
+                send(PointerAction.UP, PointerButton.LEFT, up.position)
               }
             }
           }
@@ -150,52 +152,73 @@ private sealed interface GestureResolution {
  * without moving is a tap, moved beyond the touch slop is a drag, and simply outlasting the
  * timer is a long press.
  *
- * Deliberately [AwaitPointerEventScope.withTimeoutOrNull], the member on this receiver, rather
- * than `kotlinx.coroutines.withTimeout`: the member shadows the top-level function inside this
- * scope, so a `catch` written against `kotlinx.coroutines.TimeoutCancellationException` silently
- * never fires — the member throws `PointerEventTimeoutCancellationException`, which extends
- * `CancellationException` directly, not that class. `awaitEachGesture` then swallows it as an
- * ordinary cancellation and restarts the gesture loop, so a long press appeared to do nothing at
- * all. Using `withTimeoutOrNull` here sidesteps the exception entirely.
+ * Structured the way `androidx.compose.foundation.gestures.TapGestureDetector`'s own
+ * (package-internal, otherwise this would just delegate to it) `waitForLongPress` is: a plain
+ * `try`/`catch` around the member [AwaitPointerEventScope.withTimeout] — the member shadows
+ * `kotlinx.coroutines.withTimeout` inside this scope and throws
+ * [PointerEventTimeoutCancellationException] rather than `TimeoutCancellationException` on
+ * timeout, so a `catch` written against the latter silently never fires.
  */
 private suspend fun AwaitPointerEventScope.resolveGesture(
   down: PointerInputChange,
 ): GestureResolution {
   val downPosition = down.position
-  return withTimeoutOrNull(viewConfiguration.longPressTimeoutMillis) {
-    while (true) {
-      val event = awaitPointerEvent()
-      val change = event.changes.firstOrNull { it.id == down.id } ?: continue
-      if (change.changedToUp()) {
-        change.consume()
-        return@withTimeoutOrNull GestureResolution.Tap
+  var result: GestureResolution = GestureResolution.LongPress
+  try {
+    withTimeout(viewConfiguration.longPressTimeoutMillis) {
+      while (true) {
+        val event = awaitPointerEvent()
+        val change = event.changes.firstOrNull { it.id == down.id } ?: continue
+        if (change.changedToUp()) {
+          result = GestureResolution.Tap
+          break
+        }
+        val distance = (change.position - downPosition).getDistance()
+        if (distance > viewConfiguration.touchSlop) {
+          result = GestureResolution.Drag(change)
+          break
+        }
       }
-      val distance = (change.position - downPosition).getDistance()
-      if (distance > viewConfiguration.touchSlop) {
-        change.consume()
-        return@withTimeoutOrNull GestureResolution.Drag(change)
-      }
-      change.consume()
     }
-    // Unreachable: the loop above only ever exits via an explicit return@withTimeoutOrNull.
-    // Kotlin can't prove that statically, so this satisfies the block's declared return type.
-    error("unreachable")
-  } ?: GestureResolution.LongPress
+  } catch (_: PointerEventTimeoutCancellationException) {
+    // Outlasted the timeout while still down and within the slop: a long press.
+  }
+  return result
 }
 
-/** Follows a pointer already down, invoking [onChange] on move and once more on release. */
-private suspend fun AwaitPointerEventScope.trackUntilRelease(
+/**
+ * Consumes a pointer already down until it lifts, without reporting intermediate movement.
+ *
+ * [PointerInputChange.changedToUp] is defined as `!isConsumed && previousPressed && !pressed` —
+ * consumption-gated, precisely so that a handler further up the chain can't tell a lower one
+ * already claimed the release. Calling `consume()` before checking it, rather than after, means
+ * the check can never see anything but `false`: the real release goes unrecognised and this loop
+ * waits forever for a further event from a pointer that has already lifted and will never send
+ * one. Checking first, then consuming, is what leaves the gesture able to end.
+ */
+private suspend fun AwaitPointerEventScope.consumeUntilRelease(
   pointerId: PointerId,
-  onChange: (PointerInputChange) -> Unit,
-) {
+): PointerInputChange {
   while (true) {
     val event = awaitPointerEvent()
     val change = event.changes.firstOrNull { it.id == pointerId } ?: continue
+    val released = change.changedToUp()
     change.consume()
-    if (change.changedToUp()) {
-      onChange(change)
-      return
-    }
-    onChange(change)
+    if (released) return change
+  }
+}
+
+/** Follows a pointer already down, invoking [onMove] for each movement, until it lifts. */
+private suspend fun AwaitPointerEventScope.trackDragUntilRelease(
+  pointerId: PointerId,
+  onMove: (PointerInputChange) -> Unit,
+): PointerInputChange {
+  while (true) {
+    val event = awaitPointerEvent()
+    val change = event.changes.firstOrNull { it.id == pointerId } ?: continue
+    val released = change.changedToUp()
+    change.consume()
+    if (released) return change
+    onMove(change)
   }
 }
