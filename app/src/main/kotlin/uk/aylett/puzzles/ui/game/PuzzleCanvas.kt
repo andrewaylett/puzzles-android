@@ -34,15 +34,10 @@ import androidx.compose.ui.input.pointer.changedToUp
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.unit.IntSize
-import kotlinx.coroutines.TimeoutCancellationException
-import kotlinx.coroutines.withTimeout
 import uk.aylett.puzzles.engine.PointerAction
 import uk.aylett.puzzles.engine.PointerButton
 import uk.aylett.puzzles.engine.PuzzleFrame
 import kotlin.math.roundToInt
-
-private const val LONG_PRESS_TIMEOUT_MS = 500L
-private const val TOUCH_SLOP_PX = 18f
 
 /**
  * Displays [PuzzleFrame.bitmap] pixel-for-pixel (never scaled: the mid-end already rendered it at
@@ -144,36 +139,41 @@ private sealed interface GestureResolution {
 }
 
 /**
- * Waits up to [LONG_PRESS_TIMEOUT_MS] for the gesture to declare itself: released without moving
- * is a tap, moved beyond the slop is a drag, and simply outlasting the timer is a long press.
+ * Waits up to the system's long-press timeout for the gesture to declare itself: released
+ * without moving is a tap, moved beyond the touch slop is a drag, and simply outlasting the
+ * timer is a long press.
+ *
+ * Deliberately [AwaitPointerEventScope.withTimeoutOrNull], the member on this receiver, rather
+ * than `kotlinx.coroutines.withTimeout`: the member shadows the top-level function inside this
+ * scope, so a `catch` written against `kotlinx.coroutines.TimeoutCancellationException` silently
+ * never fires — the member throws `PointerEventTimeoutCancellationException`, which extends
+ * `CancellationException` directly, not that class. `awaitEachGesture` then swallows it as an
+ * ordinary cancellation and restarts the gesture loop, so a long press appeared to do nothing at
+ * all. Using `withTimeoutOrNull` here sidesteps the exception entirely.
  */
 private suspend fun AwaitPointerEventScope.resolveGesture(
   down: PointerInputChange,
 ): GestureResolution {
   val downPosition = down.position
-  return try {
-    withTimeout(LONG_PRESS_TIMEOUT_MS) {
-      while (true) {
-        val event = awaitPointerEvent()
-        val change = event.changes.firstOrNull { it.id == down.id } ?: continue
-        if (change.changedToUp()) {
-          change.consume()
-          return@withTimeout GestureResolution.Tap
-        }
-        val distance = (change.position - downPosition).getDistance()
-        if (distance > TOUCH_SLOP_PX) {
-          change.consume()
-          return@withTimeout GestureResolution.Drag(change)
-        }
+  return withTimeoutOrNull(viewConfiguration.longPressTimeoutMillis) {
+    while (true) {
+      val event = awaitPointerEvent()
+      val change = event.changes.firstOrNull { it.id == down.id } ?: continue
+      if (change.changedToUp()) {
         change.consume()
+        return@withTimeoutOrNull GestureResolution.Tap
       }
-      // Unreachable: the loop above only ever exits via an explicit return@withTimeout. Kotlin
-      // can't prove that statically, so this satisfies the block's declared return type.
-      error("unreachable")
+      val distance = (change.position - downPosition).getDistance()
+      if (distance > viewConfiguration.touchSlop) {
+        change.consume()
+        return@withTimeoutOrNull GestureResolution.Drag(change)
+      }
+      change.consume()
     }
-  } catch (_: TimeoutCancellationException) {
-    GestureResolution.LongPress
-  }
+    // Unreachable: the loop above only ever exits via an explicit return@withTimeoutOrNull.
+    // Kotlin can't prove that statically, so this satisfies the block's declared return type.
+    error("unreachable")
+  } ?: GestureResolution.LongPress
 }
 
 /** Follows a pointer already down, invoking [onChange] on move and once more on release. */
