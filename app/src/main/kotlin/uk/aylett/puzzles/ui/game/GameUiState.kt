@@ -26,4 +26,5 @@ data class GameUiState(
   val frame: PuzzleFrame = PuzzleFrame(bitmap = null),
   val keyHints: List<KeyHint> = emptyList(),
   val toastMessage: String? = null,
+  val swapPressGesture: Boolean = false,
 )

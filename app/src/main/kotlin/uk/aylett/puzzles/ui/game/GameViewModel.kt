@@ -68,6 +68,12 @@ class GameViewModel(
 
   init {
     viewModelScope.launch {
+      prefsStore.swapPressGesture.collect { swapped ->
+        _state.value = _state.value.copy(swapPressGesture = swapped)
+      }
+    }
+
+    viewModelScope.launch {
       val engine = getApplication<PuzzlesApplication>().engine()
       val session = engine.openGame(gameIndex)
       this@GameViewModel.session = session
@@ -145,6 +151,10 @@ class GameViewModel(
 
   fun clearToast() {
     _state.value = _state.value.copy(toastMessage = null)
+  }
+
+  fun toggleSwapPressGesture() {
+    viewModelScope.launch { prefsStore.setSwapPressGesture(!_state.value.swapPressGesture) }
   }
 
   suspend fun presets(): List<PresetEntry> = session?.presets() ?: emptyList()

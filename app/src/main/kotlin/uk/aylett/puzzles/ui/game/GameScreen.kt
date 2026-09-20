@@ -30,12 +30,14 @@ import androidx.compose.material.icons.automirrored.filled.Undo
 import androidx.compose.material.icons.filled.GridView
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.SwapVert
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.IconToggleButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
@@ -189,6 +191,15 @@ fun GameScreen(
               contentDescription = stringResource(R.string.action_type),
             )
           }
+          IconToggleButton(
+            checked = uiState.swapPressGesture,
+            onCheckedChange = { viewModel.toggleSwapPressGesture() },
+          ) {
+            Icon(
+              Icons.Filled.SwapVert,
+              contentDescription = stringResource(R.string.action_swap_press_gesture),
+            )
+          }
           IconButton(onClick = { menuExpanded = true }) {
             Icon(Icons.Filled.MoreVert, contentDescription = null)
           }
@@ -256,6 +267,7 @@ fun GameScreen(
             onSizeChanged = viewModel::onSizeChanged,
             onPointerEvent = viewModel::pointer,
             modifier = Modifier.fillMaxSize(),
+            swapPressGesture = uiState.swapPressGesture,
           )
         }
 

@@ -17,6 +17,7 @@ package uk.aylett.puzzles.data
 
 import android.content.Context
 import android.util.Base64
+import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
@@ -48,6 +49,20 @@ class AppPreferences(
 
   suspend fun setLastPlayedName(name: String) {
     context.dataStore.edit { it[lastPlayedKey] = name }
+  }
+
+  private val swapPressGestureKey = booleanPreferencesKey("swap_press_gesture")
+
+  /**
+   * Whether a quick tap should act as the mid-end's right click and a press-and-hold as its left
+   * click, the reverse of the default. Applies across every puzzle, not per-game: it is a motor
+   * preference about the gesture itself, not something particular to one puzzle's controls.
+   */
+  val swapPressGesture: Flow<Boolean> =
+    context.dataStore.data.map { it[swapPressGestureKey] ?: false }
+
+  suspend fun setSwapPressGesture(swapped: Boolean) {
+    context.dataStore.edit { it[swapPressGestureKey] = swapped }
   }
 
   private fun prefsKey(gameName: String) = stringPreferencesKey("prefs_$gameName")

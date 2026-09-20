@@ -46,7 +46,10 @@ import kotlin.math.roundToInt
  *
  * The mapping, matching how every other Simon Tatham front end behaves: a quick tap is a left
  * click, a press-and-hold is a right click (several puzzles are unplayable without it, since they
- * set `REQUIRE_RBUTTON`), and moving before either resolves is a left-button drag.
+ * set `REQUIRE_RBUTTON`), and moving before either resolves is a left-button drag. [swapPressGesture]
+ * reverses which button a tap versus a hold presents as, for players who find one or the other
+ * gesture awkward to perform reliably; a drag is always the left button regardless, since it is
+ * already a distinct gesture from either.
  */
 @Composable
 fun PuzzleCanvas(
@@ -54,6 +57,7 @@ fun PuzzleCanvas(
   onSizeChanged: (Int, Int) -> Unit,
   onPointerEvent: (PointerAction, PointerButton, Int, Int) -> Unit,
   modifier: Modifier = Modifier,
+  swapPressGesture: Boolean = false,
 ) {
   var canvasSize by remember { mutableStateOf(IntSize.Zero) }
   val bitmap = frame.bitmap
@@ -87,16 +91,19 @@ fun PuzzleCanvas(
               onPointerEvent(action, button, x, y)
             }
 
+            val tapButton = if (swapPressGesture) PointerButton.RIGHT else PointerButton.LEFT
+            val holdButton = if (swapPressGesture) PointerButton.LEFT else PointerButton.RIGHT
+
             when (val resolution = resolveGesture(down)) {
               is GestureResolution.Tap -> {
-                send(PointerAction.DOWN, PointerButton.LEFT, down.position)
-                send(PointerAction.UP, PointerButton.LEFT, down.position)
+                send(PointerAction.DOWN, tapButton, down.position)
+                send(PointerAction.UP, tapButton, down.position)
               }
 
               is GestureResolution.LongPress -> {
-                send(PointerAction.DOWN, PointerButton.RIGHT, down.position)
+                send(PointerAction.DOWN, holdButton, down.position)
                 trackUntilRelease(down.id) { change ->
-                  send(PointerAction.UP, PointerButton.RIGHT, change.position)
+                  send(PointerAction.UP, holdButton, change.position)
                 }
               }
 
