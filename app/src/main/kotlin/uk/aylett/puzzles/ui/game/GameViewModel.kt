@@ -92,6 +92,11 @@ class GameViewModel(
   // on the UI thread; the session itself only ever decides whether ticking should happen at all.
   private var animationJob: Job? = null
 
+  // The collectors bound to the current `session` (frames, animating, sizing), tracked separately
+  // from viewModelScope so they can be torn down and restarted when the session is replaced — see
+  // [openSession] and the engineInvalidated collector below.
+  private var sessionJob: Job? = null
+
   init {
     viewModelScope.launch {
       prefsStore.swapPressGesture.collect { swapped ->
@@ -99,57 +104,81 @@ class GameViewModel(
       }
     }
 
+    viewModelScope.launch { openSession() }
+
     viewModelScope.launch {
-      val engine = getApplication<PuzzlesApplication>().engine()
-      val session = engine.openGame(gameIndex)
-      this@GameViewModel.session = session
-      val name = session.game.name
-      gameName = name
-
-      prefsStore.loadPrefs(name)?.let { session.loadPrefs(it) }
-      // A restore only counts if it succeeded; a corrupt or stale save must still leave us able to
-      // start a fresh game rather than sitting on an empty session forever.
-      gameStarted = savedGameStore.load(name)?.let { session.deserialise(it) == null } == true
-      prefsStore.setLastPlayedName(name)
-
-      _state.value =
-        _state.value.copy(
-          loading = false,
-          game = session.game,
-          keyHints = session.keyHints(),
-        )
-
-      launch {
-        session.frames.collect { frame -> _state.value = _state.value.copy(frame = frame) }
+      getApplication<PuzzlesApplication>().engineInvalidated.collect {
+        // The engine thread behind this session is already gone, so there's nothing left to
+        // free — just drop the reference. Reopening happens lazily in onResume, the next time
+        // this screen actually needs the engine, not eagerly here while still backgrounded.
+        animationJob?.cancel()
+        animationJob = null
+        sessionJob?.cancel()
+        session = null
       }
+    }
+  }
 
-      launch {
-        // Joined rather than just cancelled: collect() is sequential, so joining here guarantees
-        // the old loop's last tick() has finished before a restart's new one begins — without it,
-        // a deactivate immediately followed by a reactivate could leave two loops both mid-tick(),
-        // racing over the same timerStartNanos and dirty flag on the engine thread.
-        session.animating.collect { active ->
-          animationJob?.cancelAndJoin()
-          animationJob = if (active) startAnimationLoop(session) else null
+  /**
+   * Opens a fresh [PuzzleSession] against the current engine and restores whatever was last
+   * persisted for [gameName]. Callable more than once: [PuzzlesApplication.onTrimMemory] can
+   * recycle the shared engine while this screen is backgrounded, and [onResume] calls this again
+   * to replace a session whose engine thread no longer exists.
+   */
+  private suspend fun openSession() {
+    val engine = getApplication<PuzzlesApplication>().engine()
+    val session = engine.openGame(gameIndex)
+    this@GameViewModel.session = session
+    val name = session.game.name
+    gameName = name
+
+    prefsStore.loadPrefs(name)?.let { session.loadPrefs(it) }
+    // A restore only counts if it succeeded; a corrupt or stale save must still leave us able to
+    // start a fresh game rather than sitting on an empty session forever.
+    gameStarted = savedGameStore.load(name)?.let { session.deserialise(it) == null } == true
+    prefsStore.setLastPlayedName(name)
+
+    _state.value =
+      _state.value.copy(
+        loading = false,
+        game = session.game,
+        keyHints = session.keyHints(),
+      )
+
+    sessionJob =
+      viewModelScope.launch {
+        launch {
+          session.frames.collect { frame -> _state.value = _state.value.copy(frame = frame) }
         }
-      }
 
-      // Debounced so a rotation animation's stream of intermediate sizes doesn't each trigger a
-      // fresh (potentially multi-second) puzzle regeneration at that size.
-      launch {
-        pendingSize.filterNotNull().debounce(150).collectLatest { (w, h, density) ->
-          session.resize(w, h, density)
-          // A session deliberately opens without a game, so that a saved one can be restored
-          // without first paying to generate a throwaway. When there was nothing to restore, this
-          // is where the first game comes from — after the size is known, so it is generated at
-          // the size it will actually be played at.
-          if (!gameStarted) {
-            gameStarted = true
-            session.newGame()
+        launch {
+          // Joined rather than just cancelled: collect() is sequential, so joining here
+          // guarantees the old loop's last tick() has finished before a restart's new one begins
+          // — without it, a deactivate immediately followed by a reactivate could leave two loops
+          // both mid-tick(), racing over the same timerStartNanos and dirty flag on the engine
+          // thread.
+          session.animating.collect { active ->
+            animationJob?.cancelAndJoin()
+            animationJob = if (active) startAnimationLoop(session) else null
+          }
+        }
+
+        // Debounced so a rotation animation's stream of intermediate sizes doesn't each trigger a
+        // fresh (potentially multi-second) puzzle regeneration at that size.
+        launch {
+          pendingSize.filterNotNull().debounce(150).collectLatest { (w, h, density) ->
+            session.resize(w, h, density)
+            // A session deliberately opens without a game, so that a saved one can be restored
+            // without first paying to generate a throwaway. When there was nothing to restore,
+            // this is where the first game comes from — after the size is known, so it is
+            // generated at the size it will actually be played at.
+            if (!gameStarted) {
+              gameStarted = true
+              session.newGame()
+            }
           }
         }
       }
-    }
   }
 
   private fun act(block: suspend (PuzzleSession) -> Unit) {
@@ -255,7 +284,12 @@ class GameViewModel(
   }
 
   fun onResume() {
-    session?.setPaused(false)
+    viewModelScope.launch {
+      // The engine may have been recycled while backgrounded (see the engineInvalidated
+      // collector in init); reopen against the current one before resuming ticking.
+      if (session == null) openSession()
+      session?.setPaused(false)
+    }
   }
 
   private fun persist() {

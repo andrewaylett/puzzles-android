@@ -230,6 +230,24 @@ carry their own game identity, which `wasmmid_identify_game` can sniff without d
 upstream's `list.c` ordering and will shift the moment upstream adds a puzzle, silently reopening
 the wrong game from a stale preference.
 
+## Engine lifecycle
+
+The shared `PuzzleEngine` (WASM instance plus its dedicated thread) is discarded and lazily rebuilt
+across the app's lifetime, not just held for the process's — `PuzzlesApplication.onTrimMemory`
+closes it on `TRIM_MEMORY_UI_HIDDEN`, the callback the system fires once every activity has
+stopped and nothing of ours is visible. This is safe only because every `GameViewModel` persists
+its session in `onPause`, which always runs before `UI_HIDDEN`: there is nothing left to save by
+the time the engine goes.
+
+A `GameViewModel` cannot just keep its `PuzzleSession` across this — the engine thread it was
+serialised onto no longer exists, and re-entering it (`PuzzleSession.close()` included, which
+blocks on that thread) would throw. Instead `PuzzlesApplication.engineInvalidated` tells every
+open `GameViewModel` to drop its session reference outright (nothing to free — the whole `Instance`
+is garbage once dereferenced) rather than close it, and `onResume` reopens a fresh session against
+the current engine on demand, restoring from the save `onPause` just wrote. Reopening happens
+lazily in `onResume`, not eagerly in the `engineInvalidated` collector, so a screen that never comes
+back doesn't pay to rebuild the WASM instance just to immediately discard it again.
+
 ## Vendored icon artwork
 
 `app/src/main/res/drawable-nodpi/ic_game_*.png` and `puzzles_icon_montage.png` are the upstream
