@@ -16,11 +16,15 @@
 package uk.aylett.puzzles
 
 import android.os.Bundle
+import androidx.activity.BackEventCompat
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.PredictiveBackHandler
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.compose.animation.core.Animatable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
@@ -28,18 +32,32 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.unit.dp
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.launch
 import uk.aylett.puzzles.data.AppPreferences
 import uk.aylett.puzzles.ui.game.GameScreen
 import uk.aylett.puzzles.ui.list.GameListScreen
 import uk.aylett.puzzles.ui.theme.PuzzlesTheme
 
 private const val NO_GAME_SELECTED = -1
+
+// How far the open game shrinks and slides during a predictive back gesture, per the platform's
+// own convention for revealing the previous screen (see the Compose predictive-back guide).
+private const val PREDICTIVE_BACK_MIN_SCALE = 0.9f
+private val PREDICTIVE_BACK_MAX_TRANSLATION = 16.dp
+private val PREDICTIVE_BACK_MAX_CORNER_RADIUS = 32.dp
 
 /** The app's single activity: it just hosts a two-screen stack (list, then one game). */
 class MainActivity : ComponentActivity() {
@@ -89,9 +107,48 @@ private fun PuzzlesApp() {
     return
   }
 
-  if (selectedGame == NO_GAME_SELECTED) {
-    GameListScreen(onGameSelected = { selectedGame = it })
-  } else {
-    GameScreen(gameIndex = selectedGame, onBack = { selectedGame = NO_GAME_SELECTED })
+  val backProgress = remember { Animatable(0f) }
+  var swipeEdge by remember { mutableIntStateOf(BackEventCompat.EDGE_LEFT) }
+  val coroutineScope = rememberCoroutineScope()
+
+  // handleOnBackCancelled cancels this handler's own job alongside the progress channel, so a
+  // suspending snap-back here would throw immediately at its first suspension point rather than
+  // running. Animating the cancelled gesture back to rest needs a scope that outlives the job.
+  PredictiveBackHandler(
+    enabled = selectedGame != NO_GAME_SELECTED,
+  ) { events: Flow<BackEventCompat> ->
+    try {
+      events.collect { event ->
+        swipeEdge = event.swipeEdge
+        backProgress.snapTo(event.progress)
+      }
+      backProgress.snapTo(0f)
+      selectedGame = NO_GAME_SELECTED
+    } catch (_: CancellationException) {
+      coroutineScope.launch { backProgress.animateTo(0f) }
+    }
+  }
+
+  Box(modifier = Modifier.fillMaxSize()) {
+    // Kept underneath throughout the gesture so the list is what the shrinking game reveals.
+    if (selectedGame == NO_GAME_SELECTED || backProgress.value > 0f) {
+      GameListScreen(onGameSelected = { selectedGame = it })
+    }
+    if (selectedGame != NO_GAME_SELECTED) {
+      val progress = backProgress.value
+      val scale = 1f - (1f - PREDICTIVE_BACK_MIN_SCALE) * progress
+      val edgeSign = if (swipeEdge == BackEventCompat.EDGE_RIGHT) -1f else 1f
+      Box(
+        modifier =
+          Modifier
+            .graphicsLayer {
+              scaleX = scale
+              scaleY = scale
+              translationX = edgeSign * PREDICTIVE_BACK_MAX_TRANSLATION.toPx() * progress
+            }.clip(RoundedCornerShape(PREDICTIVE_BACK_MAX_CORNER_RADIUS * progress)),
+      ) {
+        GameScreen(gameIndex = selectedGame, onBack = { selectedGame = NO_GAME_SELECTED })
+      }
+    }
   }
 }
