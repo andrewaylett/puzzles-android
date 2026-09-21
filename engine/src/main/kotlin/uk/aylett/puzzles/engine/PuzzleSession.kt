@@ -16,21 +16,14 @@
 package uk.aylett.puzzles.engine
 
 import android.util.Log
-import kotlinx.coroutines.Job
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
-import kotlinx.coroutines.isActive
-import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import uk.aylett.puzzles.engine.render.BitmapDrawingSink
 
 private const val LOG_TAG = "PuzzleSession"
-
-/** How often [WasmMidend.timer] is ticked while the mid-end wants a timer running. */
-private const val TIMER_INTERVAL_MS = 50L
 
 /**
  * One game in progress: a `midend *` handle, the surface it draws into, and the published
@@ -71,8 +64,15 @@ class PuzzleSession internal constructor(
 
   private var paused = false
   private var timerWanted = false
-  private var timerJob: Job? = null
   private var timerStartNanos = 0L
+
+  // True whenever the mid-end wants a running timer and we're not backgrounded. Driven by
+  // [onActivateTimer]/[onDeactivateTimer] (the mid-end's own signal that an animation or a
+  // ticking game clock needs servicing) and by [setPaused] (the activity's visibility). The UI
+  // owns *how fast* to call [tick] while this is true — see [tick]'s doc — this session only
+  // says whether ticking should be happening at all.
+  private val _animating = MutableStateFlow(false)
+  val animating: StateFlow<Boolean> = _animating.asStateFlow()
 
   init {
     hooks.drawingSink = sink
@@ -422,49 +422,58 @@ class PuzzleSession internal constructor(
       }
     }
 
-  /** Stops or starts the ~20Hz timer tick as the activity comes and goes. */
+  /** Stops or resumes ticking as the activity comes and goes. */
   fun setPaused(paused: Boolean) {
     this.paused = paused
-    if (paused) {
-      stopTimerJob()
-    } else {
-      maybeStartTimer()
-    }
+    updateAnimating()
   }
 
   private fun onActivateTimer() {
     timerWanted = true
-    maybeStartTimer()
+    updateAnimating()
   }
 
   private fun onDeactivateTimer() {
     timerWanted = false
-    stopTimerJob()
+    updateAnimating()
   }
 
-  private fun maybeStartTimer() {
-    if (!timerWanted || paused || timerJob != null) return
-    timerStartNanos = System.nanoTime()
-    timerJob =
-      engineThread.scope.launch {
-        while (isActive) {
-          delay(TIMER_INTERVAL_MS)
-          // midend_timer takes the time since the *previous* tick, not since the timer started:
-          // it does `me->anim_pos += tplus`. Passing cumulative time would race every animation to
-          // its end and make in-game clocks (Mines, Inertia) run quadratically fast.
-          val now = System.nanoTime()
-          val delta = (now - timerStartNanos) / 1_000_000_000f
-          timerStartNanos = now
-          midend.timer(me, delta)
-          redrawAndSync()
-        }
-      }
+  private fun updateAnimating() {
+    val next = timerWanted && !paused
+    // Rebase the delta clock whenever ticking (re)starts, whether that's the mid-end asking for a
+    // fresh animation or the activity coming back to the foreground — either way, time spent not
+    // ticking must not show up as a single huge delta in the next tick() (see tick()'s doc).
+    if (next && !_animating.value) {
+      timerStartNanos = System.nanoTime()
+    }
+    _animating.value = next
   }
 
-  private fun stopTimerJob() {
-    timerJob?.cancel()
-    timerJob = null
-  }
+  /**
+   * Ticks [WasmMidend.timer] once and redraws, for the UI's animation pacing loop to call
+   * repeatedly while [animating] is true.
+   *
+   * This session only decides *whether* ticking should be happening ([animating]); how fast to
+   * call this while it's true — vsync-paced during genuine animation, backed off to a slow poll
+   * once nothing is visibly changing — is a UI-thread concern (`Choreographer`/frame timing), so
+   * it lives in the caller rather than here. midend_timer takes the time since the *previous*
+   * tick, not since the timer started: it does `me->anim_pos += tplus`. Passing cumulative time
+   * would race every animation to its end and make in-game clocks (Mines, Inertia) run
+   * quadratically fast — so the delta is measured fresh every call, however often that is.
+   *
+   * @return whether the mid-end painted anything, so the caller can tell an idle timer (a ticking
+   *   game clock with nothing else moving) from a genuinely animating one.
+   */
+  suspend fun tick(): Boolean =
+    engineThread.run {
+      if (!hasGame || !timerWanted || paused) return@run false
+      val now = System.nanoTime()
+      val delta = (now - timerStartNanos) / 1_000_000_000f
+      timerStartNanos = now
+      midend.timer(me, delta)
+      redrawAndSync()
+      sink.consumeChanged()
+    }
 
   private fun buttonCode(
     action: PointerAction,
@@ -493,8 +502,9 @@ class PuzzleSession internal constructor(
    * must only ever be freed from the thread that owns the instance.
    */
   override fun close() {
-    stopTimerJob()
+    _animating.value = false
     runBlocking(engineThread.dispatcher) {
+      hasGame = false
       if (hooks.drawingSink === sink) hooks.drawingSink = null
       hooks.onActivateTimer = null
       hooks.onDeactivateTimer = null

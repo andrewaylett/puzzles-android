@@ -34,8 +34,9 @@ data class GameInfo(
  * A snapshot of the puzzle for the UI to display.
  *
  * [bitmap] is a buffer the engine thread hands over rather than the surface it keeps drawing into.
- * The buffers are recycled — at 20Hz on an animated puzzle, allocating a fresh full-screen bitmap
- * each frame would churn tens of megabytes a second — so the *contents* of [bitmap] may change
+ * The buffers are recycled — an animated puzzle can redraw up to display refresh rate, and
+ * allocating a fresh full-screen bitmap each frame would churn tens of megabytes a second — so the
+ * *contents* of [bitmap] may change
  * identity-preservingly between frames. [frameSeq] therefore carries the change: Compose compares
  * state by equality and would never notice a mutated bitmap on its own.
  */

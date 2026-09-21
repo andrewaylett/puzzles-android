@@ -63,10 +63,11 @@ fun PuzzleCanvas(
   var canvasSize by remember { mutableStateOf(IntSize.Zero) }
   val bitmap = frame.bitmap
 
-  // The engine recycles bitmap buffers between frames (an animated puzzle redraws at ~20Hz, and
-  // a fresh full-screen allocation each time would churn tens of megabytes a second), so the same
-  // Bitmap instance comes back with different pixels. Rewrapping it is keyed on frameSeq rather
-  // than the bitmap's identity, which would never change and so would never invalidate.
+  // The engine recycles bitmap buffers between frames (an animated puzzle redraws up to display
+  // refresh rate, and a fresh full-screen allocation each time would churn tens of megabytes a
+  // second), so the same Bitmap instance comes back with different pixels. Rewrapping it is keyed
+  // on frameSeq rather than the bitmap's identity, which would never change and so would never
+  // invalidate.
   val image = remember(frame.frameSeq) { bitmap?.asImageBitmap() }
 
   Canvas(

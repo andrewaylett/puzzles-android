@@ -79,6 +79,19 @@ Coordinates are **physical pixels**. Pass `device_pixel_ratio = 1.0` to `midend_
 mid-end choose its own tile size for the pixel dimensions we give it; trying to reconcile dp with
 the mid-end's DPI notion only creates rounding disagreements.
 
+### Animation pacing
+
+`PuzzleSession.tick()` calls `midend_timer` and redraws once; how often to call it while
+`PuzzleSession.animating` is true is decided by `GameViewModel`'s pacing loop, not the engine —
+that decision needs `Choreographer`/vsync timing, which only makes sense on the UI thread. The loop
+calls `tick()` once per display frame (`awaitFrame()`) as long as `BitmapDrawingSink` reports
+something actually painted (`drawUpdate` having fired since the last check), and backs off to a
+slow poll once a run of ticks hasn't, sized in time rather than frame count so the threshold means
+the same thing on a 60Hz and a 120Hz display. That same dirty flag is sticky — set on any
+`drawUpdate`, cleared only when read — so a redraw triggered by user input outside the loop (a tap,
+handled inline via `PuzzleSession.pointer`) is picked up on the loop's next iteration and snaps it
+back to full rate, without a separate wake-up path.
+
 ## The WASM interface
 
 28 imports must all be supplied or the module will not instantiate. `wasm-midend.md` documents 22 of

@@ -24,12 +24,17 @@ import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.CreationExtras
 import kotlinx.coroutines.FlowPreview
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.android.awaitFrame
+import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.flow.filterNotNull
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import uk.aylett.puzzles.PuzzlesApplication
 import uk.aylett.puzzles.data.AppPreferences
@@ -40,6 +45,16 @@ import uk.aylett.puzzles.engine.PointerAction
 import uk.aylett.puzzles.engine.PointerButton
 import uk.aylett.puzzles.engine.PresetEntry
 import uk.aylett.puzzles.engine.PuzzleSession
+
+// How long a run of ticks must produce no visible change before the animation loop backs off from
+// vsync pacing to a slow poll — sized in time rather than frame count so it means the same thing
+// on a 60Hz and a 120Hz display. Below this, a couple of frames rounding to the same pixel mid
+// animation doesn't cause a visible stutter when it snaps back.
+private const val ANIMATION_IDLE_THRESHOLD_MS = 100L
+
+// The slow-poll rate once backed off — fast enough to keep a ticking game clock (Mines, Inertia)
+// looking live, far below display refresh rate so it costs nothing while idle.
+private const val ANIMATION_BACKOFF_INTERVAL_MS = 200L
 
 /**
  * Owns the [PuzzleSession] for one puzzle. All engine access happens here or inside functions
@@ -65,6 +80,11 @@ class GameViewModel(
 
   /** Whether this session has a game yet, either restored from a save or freshly generated. */
   private var gameStarted = false
+
+  // The animation pacing loop, running only while session.animating is true. Owned here rather
+  // than in PuzzleSession because pacing needs Choreographer/vsync timing, which only makes sense
+  // on the UI thread; the session itself only ever decides whether ticking should happen at all.
+  private var animationJob: Job? = null
 
   init {
     viewModelScope.launch {
@@ -97,6 +117,17 @@ class GameViewModel(
         session.frames.collect { frame -> _state.value = _state.value.copy(frame = frame) }
       }
 
+      launch {
+        // Joined rather than just cancelled: collect() is sequential, so joining here guarantees
+        // the old loop's last tick() has finished before a restart's new one begins — without it,
+        // a deactivate immediately followed by a reactivate could leave two loops both mid-tick(),
+        // racing over the same timerStartNanos and dirty flag on the engine thread.
+        session.animating.collect { active ->
+          animationJob?.cancelAndJoin()
+          animationJob = if (active) startAnimationLoop(session) else null
+        }
+      }
+
       // Debounced so a rotation animation's stream of intermediate sizes doesn't each trigger a
       // fresh (potentially multi-second) puzzle regeneration at that size.
       launch {
@@ -118,6 +149,39 @@ class GameViewModel(
   private fun act(block: suspend (PuzzleSession) -> Unit) {
     viewModelScope.launch { session?.let { block(it) } }
   }
+
+  /**
+   * Paces [PuzzleSession.tick] while [PuzzleSession.animating] is true: once per display frame
+   * ([awaitFrame]) as long as ticks are producing visible changes, backing off to a slow poll
+   * ([ANIMATION_BACKOFF_INTERVAL_MS]) once a run of them hasn't ([ANIMATION_IDLE_THRESHOLD_MS]).
+   * A tick handled inline elsewhere (a tap, say) sets the same dirty flag `tick()` reads, so it is
+   * picked up on the next iteration and snaps the loop straight back to full rate — no separate
+   * wake-up path needed for "refresh fast after input".
+   *
+   * Callers must join the previous loop's job before starting a new one (see the `animating`
+   * collector) — two loops calling [PuzzleSession.tick] concurrently would race over the engine's
+   * delta clock and dirty flag.
+   */
+  private fun startAnimationLoop(session: PuzzleSession): Job =
+    viewModelScope.launch {
+      var idleSinceNanos: Long? = null
+      while (isActive) {
+        val changed = session.tick()
+        val now = System.nanoTime()
+        idleSinceNanos =
+          when {
+            changed -> null
+            idleSinceNanos == null -> now
+            else -> idleSinceNanos
+          }
+        val idleMillis = idleSinceNanos?.let { (now - it) / 1_000_000 } ?: 0L
+        if (idleMillis < ANIMATION_IDLE_THRESHOLD_MS) {
+          awaitFrame()
+        } else {
+          delay(ANIMATION_BACKOFF_INTERVAL_MS)
+        }
+      }
+    }
 
   fun onSizeChanged(
     widthPx: Int,

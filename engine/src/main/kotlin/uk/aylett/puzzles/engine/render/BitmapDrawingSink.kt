@@ -43,13 +43,25 @@ class BitmapDrawingSink(
   private var bitmap: Bitmap? = null
   private var canvas: Canvas? = null
 
-  // Two buffers we publish into alternately, rather than one we allocate per frame. The mid-end
-  // runs its animation timer at ~20Hz, and a fresh full-screen ARGB_8888 bitmap each time would be
-  // on the order of 8MB per frame — enough allocation churn to be felt. Alternating is what makes
-  // reuse safe: the UI thread may still be reading the frame we published last, so we must never
-  // write into that same buffer, only into the other one.
+  // Two buffers we publish into alternately, rather than one we allocate per frame. The animation
+  // loop now paces itself to the display's own refresh rate while something is actually moving —
+  // up to 120Hz on current hardware — and a fresh full-screen ARGB_8888 bitmap each time would be
+  // on the order of 8MB per frame, so allocation churn matters even more here than it did at the
+  // old fixed 20Hz. Alternating is what makes reuse safe: the UI thread may still be reading the
+  // frame we published last, so we must never write into that same buffer, only into the other
+  // one. The two `Canvas`es wrapping them are cached alongside for the same reason: a fresh
+  // `Canvas(target)` every tick is one more allocation on a path now run far more often.
   private var publishBuffers: Array<Bitmap>? = null
+  private var publishCanvases: Array<Canvas>? = null
   private var publishIndex = 0
+
+  // Set by drawUpdate() whenever the mid-end paints something, cleared only by consumeChanged().
+  // Sticky across ticks (not reset in startDraw()) so that a change made between two ticks of the
+  // pacing loop — a tap handled inline via pointer(), say — survives to be seen by the next tick,
+  // rather than being wiped by that tick's own startDraw() before anyone reads it. This is also
+  // what lets the pacing loop in GameViewModel notice "something happened" and snap back to full
+  // refresh rate after user input, without any separate wake-up signal.
+  private var frameChanged = false
 
   private var palette: IntArray = IntArray(0)
 
@@ -89,9 +101,24 @@ class BitmapDrawingSink(
     bitmap = next
     canvas = Canvas(next)
     clipMarker = null
-    publishBuffers =
-      Array(2) { Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888) }
+    val buffers = Array(2) { Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888) }
+    publishBuffers = buffers
+    publishCanvases = Array(buffers.size) { Canvas(buffers[it]) }
     publishIndex = 0
+  }
+
+  /**
+   * Returns whether the mid-end has painted anything since the last call, and clears the flag.
+   *
+   * Used by the animation pacing loop to tell "still animating" from "the timer fired but nothing
+   * actually moved", so it can back off to a slow poll once a run of ticks produces no visible
+   * change, and snap back to full rate the moment something — a tick's own animation frame, or a
+   * redraw triggered by user input — sets the flag again.
+   */
+  fun consumeChanged(): Boolean {
+    val changed = frameChanged
+    frameChanged = false
+    return changed
   }
 
   /**
@@ -116,6 +143,7 @@ class BitmapDrawingSink(
   override fun endDraw() {
     val current = bitmap ?: return
     val buffers = publishBuffers ?: return
+    val canvases = publishCanvases ?: return
     // Copy rather than hand over `current` directly: the mid-end draws incrementally, relying on
     // what it painted last time still being there, so the surface it owns can never be given away.
     // We copy it whole; `drawUpdate` tells us which parts changed, but tracking dirty regions per
@@ -123,7 +151,7 @@ class BitmapDrawingSink(
     // full-surface copy is a memcpy of a few milliseconds at the sizes involved.
     publishIndex = (publishIndex + 1) % buffers.size
     val target = buffers[publishIndex]
-    Canvas(target).drawBitmap(current, 0f, 0f, null)
+    canvases[publishIndex].drawBitmap(current, 0f, 0f, null)
     onFrame(target)
   }
 
@@ -268,9 +296,11 @@ class BitmapDrawingSink(
     w: Int,
     h: Int,
   ) {
-    // Deliberately ignored. This tells us which rectangle changed, which would let endDraw copy
-    // less, but Compose redraws the whole Image either way, so the only saving would be in the
-    // surface-to-buffer copy — and that copy is already cheap next to the drawing that produced it.
+    // The rectangle itself is ignored: it would let endDraw copy less, but Compose redraws the
+    // whole Image either way, so the only saving would be in the surface-to-buffer copy — already
+    // cheap next to the drawing that produced it. That the call happened at all is what we keep;
+    // see frameChanged.
+    frameChanged = true
   }
 
   override fun clip(
