@@ -75,9 +75,33 @@ So: the engine thread draws into a retained off-screen `Bitmap` via an `android.
 and the UI thread is handed a snapshot to display. A blitter is just a smaller `Bitmap` holding a
 copied-out rectangle.
 
-Coordinates are **physical pixels**. Pass `device_pixel_ratio = 1.0` to `midend_size` and let the
-mid-end choose its own tile size for the pixel dimensions we give it; trying to reconcile dp with
-the mid-end's DPI notion only creates rounding disagreements.
+Coordinates are physical pixels *divided by an integer scale*, not raw physical pixels. Several
+back ends draw fixed-pixel-sized UI elements that don't scale with tile size — untangle's
+grab-handle `CIRCLE_RADIUS`/`DRAG_THRESHOLD`, for instance, is a compile-time constant, not derived
+from tile size — so sizing the mid-end directly in physical pixels leaves those elements a fixed
+*physical* size that shrinks as display density rises, to the point of being unreliable to tap on
+a high-density phone. Instead `PuzzleSession` sizes the mid-end in a `floor(density)`-reduced
+space (`scale = max(1, floor(density))`), and `BitmapDrawingSink` scales every draw call back up by
+that factor via a `Canvas.scale` transform, so those fixed-pixel elements grow with density the way
+the rest of the puzzle already does. The scale must be an integer: back ends tile adjacent
+rectangles edge-to-edge in integer coordinates, and a fractional scale lands those edges mid-pixel,
+seaming every cell boundary and disagreeing on blitter save/load roundtrips (see the four games
+that keep blitters, below) — so the fractional remainder of `density` is simply dropped rather than
+reconciled. `device_pixel_ratio` is still passed through to `midend_size` for the record, but only
+matters on the `userSize = false` path (`convert_tilesize` in `midend.c`), which this front end
+never takes.
+
+Blitters store and replay pixels 1:1 in physical pixels: their own bitmaps are allocated at
+`scale`× the size the mid-end asks for, and save/load convert the mid-end's coordinates to physical
+pixels explicitly rather than relying on the scaled `Canvas` — resampling a saved rectangle twice
+(once implicitly on save, again on load) would visibly soften it.
+
+The rendered surface always fits the viewport the UI offered, by construction: the mid-end is asked
+to fit `viewport / scale`, and what it returns times `scale` is at most `viewport`. It can render a
+few pixels smaller than the viewport it was given — the reduced space quantises tile sizes `scale`×
+more coarsely, leaving up to `scale - 1` px unused per axis — which the existing centring in
+`PuzzleCanvas` absorbs. Puzzles are never scaled to fit and never exceed the viewport, so there is
+no zoom or pan gesture to support today.
 
 ### Animation pacing
 

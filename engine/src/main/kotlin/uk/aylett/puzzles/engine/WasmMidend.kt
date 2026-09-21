@@ -171,16 +171,25 @@ class WasmMidend(
   fun getParams(me: Int): Int = call1("midend_get_params", me.toLong())
 
   /**
-   * Sizes the game to fit [width]x[height] physical pixels, returning the size the mid-end will
-   * actually draw at. `device_pixel_ratio` is fixed at 1.0: coordinates throughout this engine are
-   * physical pixels, and letting the mid-end apply its own DPI notion on top just creates rounding
-   * disagreements with ours.
+   * Sizes the game to fit [width]x[height] units, returning the size the mid-end will actually
+   * draw at, in the same units.
+   *
+   * [width]/[height] are *not* physical pixels: fixed-pixel constants inside several back ends
+   * (untangle's grab-handle `CIRCLE_RADIUS`, for one) don't scale with tile size, so handing the
+   * mid-end a raw-physical-pixel budget shrinks touch targets as display density rises — a puzzle
+   * generated for a 3x screen gets the same 6-pixel handle as one generated for a 1x screen, but
+   * it's a third the physical size. `PuzzleSession` therefore works in a `floor(density)`-reduced
+   * space and scales every draw call back up by that factor, so callers here pass pre-divided
+   * dimensions. [devicePixelRatio] is passed through for the record — `midend_size` only consults
+   * it on the `userSize = false` path (see `convert_tilesize` in `midend.c`), which this front end
+   * never takes, so it has no effect on what comes back.
    */
   fun size(
     me: Int,
     width: Int,
     height: Int,
     userSize: Boolean = false,
+    devicePixelRatio: Double = 1.0,
   ): Pair<Int, Int> =
     withIntScratch(2) { scratch ->
       val xPtr = scratch
@@ -193,7 +202,7 @@ class WasmMidend(
         xPtr.toLong(),
         yPtr.toLong(),
         if (userSize) 1L else 0L,
-        java.lang.Double.doubleToRawLongBits(1.0),
+        java.lang.Double.doubleToRawLongBits(devicePixelRatio),
       )
       memory().readInt(xPtr) to memory().readInt(yPtr)
     }

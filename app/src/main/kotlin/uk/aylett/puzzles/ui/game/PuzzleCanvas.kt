@@ -34,6 +34,7 @@ import androidx.compose.ui.input.pointer.PointerInputChange
 import androidx.compose.ui.input.pointer.changedToUp
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.IntSize
 import uk.aylett.puzzles.engine.PointerAction
 import uk.aylett.puzzles.engine.PointerButton
@@ -55,13 +56,14 @@ import kotlin.math.roundToInt
 @Composable
 fun PuzzleCanvas(
   frame: PuzzleFrame,
-  onSizeChanged: (Int, Int) -> Unit,
+  onSizeChanged: (Int, Int, Float) -> Unit,
   onPointerEvent: (PointerAction, PointerButton, Int, Int) -> Unit,
   modifier: Modifier = Modifier,
   swapPressGesture: Boolean = false,
 ) {
   var canvasSize by remember { mutableStateOf(IntSize.Zero) }
   val bitmap = frame.bitmap
+  val density = LocalDensity.current.density
 
   // The engine recycles bitmap buffers between frames (an animated puzzle redraws up to display
   // refresh rate, and a fresh full-screen allocation each time would churn tens of megabytes a
@@ -76,7 +78,7 @@ fun PuzzleCanvas(
         .fillMaxSize()
         .onSizeChanged {
           canvasSize = it
-          onSizeChanged(it.width, it.height)
+          onSizeChanged(it.width, it.height, density)
         }.pointerInput(Unit) {
           awaitEachGesture {
             val down = awaitFirstDown(requireUnconsumed = false)

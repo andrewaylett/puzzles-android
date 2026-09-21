@@ -61,6 +61,18 @@ class PuzzleSession internal constructor(
   // mid-end's sizing without waiting for a layout pass that will never come.
   private var viewportWidth = 0
   private var viewportHeight = 0
+  private var density = 1f
+
+  // floor(density), never less than 1. Several back ends draw fixed-pixel-sized UI elements —
+  // untangle's grab-handle CIRCLE_RADIUS, for one — that don't scale with tile size, so sizing the
+  // mid-end directly in physical pixels leaves those elements a fixed *physical* size that shrinks
+  // as density rises. Instead the mid-end is sized in this reduced space, and every draw call the
+  // sink receives is scaled back up by the same integer, growing those fixed-pixel elements with
+  // density the way the rest of the puzzle already does. It must be an integer: the back ends tile
+  // adjacent rectangles edge-to-edge in integer coordinates, and a fractional scale would land
+  // those edges mid-pixel, seaming every cell boundary and disagreeing on blitter save/load
+  // roundtrips (see AGENTS.md on the four games that keep blitters).
+  private var scale = 1
 
   private var paused = false
   private var timerWanted = false
@@ -159,18 +171,27 @@ class PuzzleSession internal constructor(
     if (!hasGame) return
     if (viewportWidth <= 0 || viewportHeight <= 0) return
     val (drawWidth, drawHeight) =
-      midend.size(me, viewportWidth, viewportHeight, userSize = true)
-    sink.resize(drawWidth, drawHeight)
+      midend.size(
+        me,
+        viewportWidth / scale,
+        viewportHeight / scale,
+        userSize = true,
+        devicePixelRatio = density.toDouble(),
+      )
+    sink.resize(drawWidth * scale, drawHeight * scale, scale)
   }
 
   suspend fun resize(
     widthPx: Int,
     heightPx: Int,
+    density: Float = 1f,
   ) = engineThread.run {
     // Recorded even when there is no game yet: whichever call generates the first one will size it
     // to this viewport, so an early resize is remembered rather than lost.
     viewportWidth = widthPx
     viewportHeight = heightPx
+    this.density = density
+    this.scale = density.toInt().coerceAtLeast(1)
     if (!hasGame) return@run
     applySize()
     applyPalette()
@@ -217,13 +238,14 @@ class PuzzleSession internal constructor(
       error
     }
 
+  /** @param x @param y physical pixels within the rendered bitmap, as the UI hands them to us. */
   suspend fun pointer(
     action: PointerAction,
     button: PointerButton,
     x: Int,
     y: Int,
   ) = engineThread.run {
-    midend.processKey(me, x, y, buttonCode(action, button))
+    midend.processKey(me, x / scale, y / scale, buttonCode(action, button))
     redrawAndSync()
   }
 

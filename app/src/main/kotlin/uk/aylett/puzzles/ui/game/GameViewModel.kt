@@ -56,6 +56,12 @@ private const val ANIMATION_IDLE_THRESHOLD_MS = 100L
 // looking live, far below display refresh rate so it costs nothing while idle.
 private const val ANIMATION_BACKOFF_INTERVAL_MS = 200L
 
+private data class PendingSize(
+  val widthPx: Int,
+  val heightPx: Int,
+  val density: Float,
+)
+
 /**
  * Owns the [PuzzleSession] for one puzzle. All engine access happens here or inside functions
  * this exposes; the composables that make up the game screen only ever read [state] and call
@@ -76,7 +82,7 @@ class GameViewModel(
   // Set once the session opens and its GameInfo is known; persistence is keyed on the game's
   // name rather than gameIndex, which is just upstream's list ordering and could shift.
   private var gameName: String? = null
-  private val pendingSize = MutableStateFlow<Pair<Int, Int>?>(null)
+  private val pendingSize = MutableStateFlow<PendingSize?>(null)
 
   /** Whether this session has a game yet, either restored from a save or freshly generated. */
   private var gameStarted = false
@@ -131,8 +137,8 @@ class GameViewModel(
       // Debounced so a rotation animation's stream of intermediate sizes doesn't each trigger a
       // fresh (potentially multi-second) puzzle regeneration at that size.
       launch {
-        pendingSize.filterNotNull().debounce(150).collectLatest { (w, h) ->
-          session.resize(w, h)
+        pendingSize.filterNotNull().debounce(150).collectLatest { (w, h, density) ->
+          session.resize(w, h, density)
           // A session deliberately opens without a game, so that a saved one can be restored
           // without first paying to generate a throwaway. When there was nothing to restore, this
           // is where the first game comes from — after the size is known, so it is generated at
@@ -186,8 +192,9 @@ class GameViewModel(
   fun onSizeChanged(
     widthPx: Int,
     heightPx: Int,
+    density: Float,
   ) {
-    pendingSize.value = widthPx to heightPx
+    pendingSize.value = PendingSize(widthPx, heightPx, density)
   }
 
   fun pointer(

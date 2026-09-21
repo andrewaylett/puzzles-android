@@ -41,7 +41,17 @@ class BitmapDrawingSink(
   private val onStatus: (String) -> Unit,
 ) : DrawingSink {
   private var bitmap: Bitmap? = null
+
+  // The mid-end draws in a density-reduced coordinate space (see PuzzleSession.scale); this is the
+  // main surface's Canvas with that scale baked in as a transform, so every drawXxx call below
+  // lands at the right physical-pixel position without having to multiply each coordinate by hand.
   private var canvas: Canvas? = null
+
+  // The same surface, but without the scale transform: blitters need pixel-exact placement using
+  // physical-pixel coordinates (a save/load roundtrip must not resample), so they compute their own
+  // scaled coordinates explicitly and draw through this instead of through the scaled [canvas].
+  private var rawCanvas: Canvas? = null
+  private var scale = 1
 
   // Two buffers we publish into alternately, rather than one we allocate per frame. The animation
   // loop now paces itself to the display's own refresh rate while something is actually moving —
@@ -86,20 +96,31 @@ class BitmapDrawingSink(
   private val textBounds = Rect()
 
   /**
-   * (Re)allocates the backing bitmap. Called from the engine thread whenever `midend_size` picks a
-   * new physical-pixel size; a no-op if the size is unchanged, since the mid-end may call this more
+   * (Re)allocates the backing bitmap at [width]x[height] physical pixels, and records [scale] (the
+   * mid-end's coordinate space is [width]/[scale] x [height]/[scale]) for every draw call to come
+   * until the next resize. A no-op if neither has changed, since the mid-end may call this more
    * often than the size actually changes.
    */
   fun resize(
     width: Int,
     height: Int,
+    scale: Int = 1,
   ) {
     if (width <= 0 || height <= 0) return
     val current = bitmap
-    if (current != null && current.width == width && current.height == height) return
+    if (current != null && current.width == width && current.height == height &&
+      this.scale == scale
+    ) {
+      return
+    }
+    this.scale = scale
     val next = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
     bitmap = next
-    canvas = Canvas(next)
+    canvas =
+      Canvas(next).apply {
+        scale(scale.toFloat(), scale.toFloat())
+      }
+    rawCanvas = Canvas(next)
     clipMarker = null
     val buffers = Array(2) { Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888) }
     publishBuffers = buffers
@@ -328,13 +349,18 @@ class BitmapDrawingSink(
     onStatus(text)
   }
 
+  // Blitters store and replay physical pixels 1:1: the mid-end hands us w/h/x/y in its own
+  // reduced coordinate space, same as every other draw call, so they're scaled up explicitly here
+  // rather than via the [canvas] transform. Sizing the buffer itself in physical pixels (rather
+  // than relying on a scaled Canvas to stretch a small one) is what keeps a save/load roundtrip
+  // pixel-exact instead of resampling it twice.
   override fun blitterNew(
     w: Int,
     h: Int,
   ): Int {
     val handle = nextBlitterHandle++
-    val safeWidth = w.coerceAtLeast(1)
-    val safeHeight = h.coerceAtLeast(1)
+    val safeWidth = (w * scale).coerceAtLeast(1)
+    val safeHeight = (h * scale).coerceAtLeast(1)
     blitters[handle] = Bitmap.createBitmap(safeWidth, safeHeight, Bitmap.Config.ARGB_8888)
     return handle
   }
@@ -350,12 +376,14 @@ class BitmapDrawingSink(
   ) {
     val source = bitmap ?: return
     val target = blitters[handle] ?: return
+    val px = x * scale
+    val py = y * scale
     // Games such as Mines legitimately save rectangles that hang off the surface edge during drag
     // animations, so clamp to the surface bounds rather than letting Canvas throw.
-    val srcLeft = x.coerceIn(0, source.width)
-    val srcTop = y.coerceIn(0, source.height)
-    val srcRight = (x + target.width).coerceIn(0, source.width)
-    val srcBottom = (y + target.height).coerceIn(0, source.height)
+    val srcLeft = px.coerceIn(0, source.width)
+    val srcTop = py.coerceIn(0, source.height)
+    val srcRight = (px + target.width).coerceIn(0, source.width)
+    val srcBottom = (py + target.height).coerceIn(0, source.height)
     if (srcRight <= srcLeft || srcBottom <= srcTop) return
     val blitterCanvas = Canvas(target)
     // Clear first: a save whose rectangle is partly off-surface only copies the in-bounds part, and
@@ -364,10 +392,10 @@ class BitmapDrawingSink(
     val src = Rect(srcLeft, srcTop, srcRight, srcBottom)
     val dst =
       RectF(
-        (srcLeft - x).toFloat(),
-        (srcTop - y).toFloat(),
-        (srcRight - x).toFloat(),
-        (srcBottom - y).toFloat(),
+        (srcLeft - px).toFloat(),
+        (srcTop - py).toFloat(),
+        (srcRight - px).toFloat(),
+        (srcBottom - py).toFloat(),
       )
     blitterCanvas.drawBitmap(source, src, dst, null)
   }
@@ -377,8 +405,8 @@ class BitmapDrawingSink(
     x: Int,
     y: Int,
   ) {
-    val c = canvas ?: return
+    val c = rawCanvas ?: return
     val source = blitters[handle] ?: return
-    c.drawBitmap(source, x.toFloat(), y.toFloat(), null)
+    c.drawBitmap(source, (x * scale).toFloat(), (y * scale).toFloat(), null)
   }
 }
