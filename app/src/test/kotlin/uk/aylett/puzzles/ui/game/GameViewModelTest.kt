@@ -25,7 +25,6 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.resetMain
@@ -33,6 +32,7 @@ import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.setMain
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.Assertions.assertFalse
+import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 import uk.aylett.puzzles.EngineProvider
@@ -64,9 +64,12 @@ class GameViewModelTest {
       override suspend fun engine(): PuzzleEngine = engineReady.await()
     }
 
+  private val swapSetting = MutableStateFlow(false)
+
   private val prefs =
     mockk<AppPreferences>(relaxUnitFun = true) {
-      every { swapPressGesture } returns flowOf(false)
+      every { swapPressGesture } returns swapSetting
+      coEvery { setSwapPressGesture(any()) } coAnswers { swapSetting.value = firstArg() }
       coEvery { loadPrefs(any()) } returns null
     }
 
@@ -153,5 +156,22 @@ class GameViewModelTest {
       // Closing would re-enter the engine thread that no longer exists.
       assertFalse(openedSessions.isEmpty())
       openedSessions.forEach { verify(exactly = 0) { it.close() } }
+    }
+
+  @Test
+  fun `the invert control flips the swap-press setting and the state follows it`() =
+    runTest(dispatcher) {
+      engineReady.complete(engine)
+      val vm = viewModel()
+      advanceUntilIdle()
+      assertFalse(vm.state.value.swapPressGesture)
+
+      vm.toggleSwapPressGesture()
+      advanceUntilIdle()
+      assertTrue(vm.state.value.swapPressGesture)
+
+      vm.toggleSwapPressGesture()
+      advanceUntilIdle()
+      assertFalse(vm.state.value.swapPressGesture)
     }
 }

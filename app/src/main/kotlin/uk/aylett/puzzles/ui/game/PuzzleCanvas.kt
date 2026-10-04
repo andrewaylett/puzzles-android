@@ -23,6 +23,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
@@ -46,12 +47,9 @@ import kotlin.math.roundToInt
  * exactly the size we asked for, so any resampling here would only blur it) and translates touch
  * gestures into the mid-end's mouse model.
  *
- * The mapping, matching how every other Simon Tatham front end behaves: a quick tap is a left
- * click, a press-and-hold is a right click (several puzzles are unplayable without it, since they
- * set `REQUIRE_RBUTTON`), and moving before either resolves is a left-button drag. [swapPressGesture]
- * reverses which button a tap versus a hold presents as, for players who find one or the other
- * gesture awkward to perform reliably; a drag is always the left button regardless, since it is
- * already a distinct gesture from either.
+ * The mapping, matching how every other Simon Tatham front end behaves, is decided by
+ * [GestureTranslator]; this only feeds it pointer events and the long-press timeout. Several
+ * puzzles set `REQUIRE_RBUTTON` and are unplayable without the hold gesture.
  */
 @Composable
 fun PuzzleCanvas(
@@ -64,6 +62,14 @@ fun PuzzleCanvas(
   var canvasSize by remember { mutableStateOf(IntSize.Zero) }
   val bitmap = frame.bitmap
   val density = LocalDensity.current.density
+
+  // The gesture handler below is keyed on Unit so it is not torn down and restarted on every
+  // frame, which means it only ever sees the values from the first composition. Anything that can
+  // change afterwards — the setting toggled from the toolbar, each new frame's bitmap, the
+  // callback — has to be read through these instead of captured directly.
+  val currentSwap = rememberUpdatedState(swapPressGesture)
+  val currentBitmap = rememberUpdatedState(bitmap)
+  val currentOnPointerEvent = rememberUpdatedState(onPointerEvent)
 
   // The engine recycles bitmap buffers between frames (an animated puzzle redraws up to display
   // refresh rate, and a fresh full-screen allocation each time would churn tens of megabytes a
@@ -82,42 +88,50 @@ fun PuzzleCanvas(
         }.pointerInput(Unit) {
           awaitEachGesture {
             val down = awaitFirstDown(requireUnconsumed = false)
-            val bmp = bitmap ?: return@awaitEachGesture
+            val bmp = currentBitmap.value ?: return@awaitEachGesture
             val offset = bitmapOffset(canvasSize, bmp.width, bmp.height)
+            val translator =
+              GestureTranslator(
+                touchSlop = viewConfiguration.touchSlop,
+                swapPress = currentSwap.value,
+              ) { action, button, x, y ->
+                currentOnPointerEvent.value(
+                  action,
+                  button,
+                  (x - offset.x).roundToInt(),
+                  (y - offset.y).roundToInt(),
+                )
+              }
+            translator.down(down.position.x, down.position.y)
 
-            fun send(
-              action: PointerAction,
-              button: PointerButton,
-              position: Offset,
-            ) {
-              val x = (position.x - offset.x).roundToInt()
-              val y = (position.y - offset.y).roundToInt()
-              onPointerEvent(action, button, x, y)
+            var released = false
+            try {
+              withTimeout(viewConfiguration.longPressTimeoutMillis) {
+                while (translator.isUndecided) {
+                  val change = nextChange(down.id) ?: continue
+                  if (change.changedToUp()) {
+                    translator.up(change.position.x, change.position.y)
+                    released = true
+                  } else {
+                    translator.move(change.position.x, change.position.y)
+                  }
+                }
+              }
+            } catch (_: PointerEventTimeoutCancellationException) {
+              // Outlasted the timeout while still down and within the slop: a long press.
+              translator.longPressElapsed()
             }
 
-            val tapButton = if (swapPressGesture) PointerButton.RIGHT else PointerButton.LEFT
-            val holdButton = if (swapPressGesture) PointerButton.LEFT else PointerButton.RIGHT
-
-            when (val resolution = resolveGesture(down)) {
-              is GestureResolution.Tap -> {
-                send(PointerAction.DOWN, tapButton, down.position)
-                send(PointerAction.UP, tapButton, down.position)
-              }
-
-              is GestureResolution.LongPress -> {
-                send(PointerAction.DOWN, holdButton, down.position)
-                val up = consumeUntilRelease(down.id)
-                send(PointerAction.UP, holdButton, up.position)
-              }
-
-              is GestureResolution.Drag -> {
-                send(PointerAction.DOWN, PointerButton.LEFT, down.position)
-                send(PointerAction.DRAG, PointerButton.LEFT, resolution.change.position)
-                val up =
-                  trackDragUntilRelease(down.id) { change ->
-                    send(PointerAction.DRAG, PointerButton.LEFT, change.position)
-                  }
-                send(PointerAction.UP, PointerButton.LEFT, up.position)
+            // Consumption is checked before it happens, not after: changedToUp is gated on
+            // !isConsumed, so consuming first would hide the real release and wait forever.
+            while (!released) {
+              val change = nextChange(down.id) ?: continue
+              released = change.changedToUp()
+              change.consume()
+              if (released) {
+                translator.up(change.position.x, change.position.y)
+              } else {
+                translator.move(change.position.x, change.position.y)
               }
             }
           }
@@ -140,88 +154,6 @@ private fun bitmapOffset(
     ((canvasSize.height - bitmapHeight) / 2).toFloat(),
   )
 
-private sealed interface GestureResolution {
-  data object Tap : GestureResolution
-
-  data object LongPress : GestureResolution
-
-  data class Drag(
-    val change: PointerInputChange,
-  ) : GestureResolution
-}
-
-/**
- * Waits up to the system's long-press timeout for the gesture to declare itself: released
- * without moving is a tap, moved beyond the touch slop is a drag, and simply outlasting the
- * timer is a long press.
- *
- * Structured the way `androidx.compose.foundation.gestures.TapGestureDetector`'s own
- * (package-internal, otherwise this would just delegate to it) `waitForLongPress` is: a plain
- * `try`/`catch` around the member [AwaitPointerEventScope.withTimeout] — the member shadows
- * `kotlinx.coroutines.withTimeout` inside this scope and throws
- * [PointerEventTimeoutCancellationException] rather than `TimeoutCancellationException` on
- * timeout, so a `catch` written against the latter silently never fires.
- */
-private suspend fun AwaitPointerEventScope.resolveGesture(
-  down: PointerInputChange,
-): GestureResolution {
-  val downPosition = down.position
-  var result: GestureResolution = GestureResolution.LongPress
-  try {
-    withTimeout(viewConfiguration.longPressTimeoutMillis) {
-      while (true) {
-        val event = awaitPointerEvent()
-        val change = event.changes.firstOrNull { it.id == down.id } ?: continue
-        if (change.changedToUp()) {
-          result = GestureResolution.Tap
-          break
-        }
-        val distance = (change.position - downPosition).getDistance()
-        if (distance > viewConfiguration.touchSlop) {
-          result = GestureResolution.Drag(change)
-          break
-        }
-      }
-    }
-  } catch (_: PointerEventTimeoutCancellationException) {
-    // Outlasted the timeout while still down and within the slop: a long press.
-  }
-  return result
-}
-
-/**
- * Consumes a pointer already down until it lifts, without reporting intermediate movement.
- *
- * [PointerInputChange.changedToUp] is defined as `!isConsumed && previousPressed && !pressed` —
- * consumption-gated, precisely so that a handler further up the chain can't tell a lower one
- * already claimed the release. Calling `consume()` before checking it, rather than after, means
- * the check can never see anything but `false`: the real release goes unrecognised and this loop
- * waits forever for a further event from a pointer that has already lifted and will never send
- * one. Checking first, then consuming, is what leaves the gesture able to end.
- */
-private suspend fun AwaitPointerEventScope.consumeUntilRelease(
-  pointerId: PointerId,
-): PointerInputChange {
-  while (true) {
-    val event = awaitPointerEvent()
-    val change = event.changes.firstOrNull { it.id == pointerId } ?: continue
-    val released = change.changedToUp()
-    change.consume()
-    if (released) return change
-  }
-}
-
-/** Follows a pointer already down, invoking [onMove] for each movement, until it lifts. */
-private suspend fun AwaitPointerEventScope.trackDragUntilRelease(
-  pointerId: PointerId,
-  onMove: (PointerInputChange) -> Unit,
-): PointerInputChange {
-  while (true) {
-    val event = awaitPointerEvent()
-    val change = event.changes.firstOrNull { it.id == pointerId } ?: continue
-    val released = change.changedToUp()
-    change.consume()
-    if (released) return change
-    onMove(change)
-  }
-}
+/** The next change for [pointerId], skipping events that only concern other pointers. */
+private suspend fun AwaitPointerEventScope.nextChange(pointerId: PointerId): PointerInputChange? =
+  awaitPointerEvent().changes.firstOrNull { it.id == pointerId }
