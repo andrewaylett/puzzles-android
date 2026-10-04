@@ -18,7 +18,6 @@
 package uk.aylett.puzzles.ui.game
 
 import android.app.Application
-import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
@@ -38,6 +37,7 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import uk.aylett.puzzles.EngineProvider
 import uk.aylett.puzzles.PuzzlesApplication
 import uk.aylett.puzzles.data.AppPreferences
 import uk.aylett.puzzles.data.SavedGameStore
@@ -70,12 +70,11 @@ private data class PendingSize(
  * these methods, never the session directly.
  */
 class GameViewModel(
-  application: Application,
+  private val engines: EngineProvider,
   private val gameIndex: Int,
-) : AndroidViewModel(application) {
-  private val prefsStore = AppPreferences(application)
-  private val savedGameStore = SavedGameStore(application)
-
+  private val prefsStore: AppPreferences,
+  private val savedGameStore: SavedGameStore,
+) : ViewModel() {
   private val _state = MutableStateFlow(GameUiState())
   val state: StateFlow<GameUiState> = _state.asStateFlow()
 
@@ -115,7 +114,7 @@ class GameViewModel(
     viewModelScope.launch { openSession() }
 
     viewModelScope.launch {
-      getApplication<PuzzlesApplication>().engineInvalidated.collect {
+      engines.engineInvalidated.collect {
         // The engine thread behind this session is already gone, so there's nothing left to
         // free — just drop the reference. Reopening happens lazily in onResume, the next time
         // this screen actually needs the engine, not eagerly here while still backgrounded.
@@ -139,7 +138,7 @@ class GameViewModel(
     }
 
   private suspend fun doOpenSession() {
-    val engine = getApplication<PuzzlesApplication>().engine()
+    val engine = engines.engine()
     val session = engine.openGame(gameIndex)
     this@GameViewModel.session = session
     val name = session.game.name
@@ -329,7 +328,12 @@ class GameViewModel(
           extras: CreationExtras,
         ): T {
           @Suppress("UNCHECKED_CAST")
-          return GameViewModel(application, gameIndex) as T
+          return GameViewModel(
+            application as PuzzlesApplication,
+            gameIndex,
+            AppPreferences(application),
+            SavedGameStore(application),
+          ) as T
         }
       }
   }

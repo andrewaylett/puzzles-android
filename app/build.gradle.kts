@@ -52,7 +52,16 @@ dependencies {
   implementation(libs.compose.ui.tooling.preview)
   debugImplementation(libs.compose.ui.tooling)
 
+  testImplementation(libs.junit.jupiter)
+  testImplementation(libs.kotlinx.coroutines.test)
+  testImplementation(libs.mockk)
+  testRuntimeOnly(libs.junit.platform.launcher)
+
   androidTestImplementation(platform(libs.compose.bom))
   androidTestImplementation(libs.androidx.test.junit)
   androidTestImplementation(libs.androidx.test.espresso.core)
+}
+
+tasks.withType<Test>().configureEach {
+  useJUnitPlatform()
 }

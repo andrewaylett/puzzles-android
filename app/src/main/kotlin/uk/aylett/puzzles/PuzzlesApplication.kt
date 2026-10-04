@@ -31,6 +31,17 @@ import kotlinx.coroutines.sync.withLock
 import uk.aylett.puzzles.engine.PuzzleEngine
 
 /**
+ * What a ViewModel needs from the process-wide engine owner. An interface so that ViewModels can
+ * be tested without instantiating the WASM module or an [Application].
+ */
+interface EngineProvider {
+  /** Emits whenever the engine previously returned by [engine] has been closed. */
+  val engineInvalidated: SharedFlow<Unit>
+
+  suspend fun engine(): PuzzleEngine
+}
+
+/**
  * Owns the single [PuzzleEngine] for the process.
  *
  * Creating the engine loads and instantiates the WASM module, which is too expensive to repeat
@@ -38,7 +49,9 @@ import uk.aylett.puzzles.engine.PuzzleEngine
  * constructing their own. It is also discarded and rebuilt across the app's lifetime, not just the
  * process's — see [onTrimMemory].
  */
-class PuzzlesApplication : Application() {
+class PuzzlesApplication :
+  Application(),
+  EngineProvider {
   val applicationScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
   private val engineMutex = Mutex()
@@ -49,13 +62,13 @@ class PuzzlesApplication : Application() {
   // ready" event, only "yours is stale" — recreating a session is only worth doing once a screen
   // actually needs the engine again (GameViewModel.onResume), not eagerly here.
   private val _engineInvalidated = MutableSharedFlow<Unit>(extraBufferCapacity = 1)
-  val engineInvalidated: SharedFlow<Unit> = _engineInvalidated.asSharedFlow()
+  override val engineInvalidated: SharedFlow<Unit> = _engineInvalidated.asSharedFlow()
 
   /**
    * Returns the process's [PuzzleEngine], creating it lazily on first use or after
    * [onTrimMemory] discarded a previous instance.
    */
-  suspend fun engine(): PuzzleEngine {
+  override suspend fun engine(): PuzzleEngine {
     val deferred =
       engineMutex.withLock {
         engineDeferred

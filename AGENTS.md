@@ -269,6 +269,15 @@ upstream montage rather than copied from any Android port, to sidestep the ambig
 on the one prior Android port's own icon set ("does not apply to the additional graphics
 distributed in the Google Play Store version").
 
+## Testing
+
+JVM unit tests live in `app/src/test` (JUnit 5, MockK, `kotlinx-coroutines-test`); run them with
+`./gradlew :app:testDebugUnitTest`. ViewModels take their collaborators by constructor
+(`EngineProvider`, the stores) precisely so they can be tested without the WASM module or an
+Android `Context`; sessions and the engine are final classes, so tests mock them with MockK rather
+than hiding them behind interfaces that would only exist for the tests. Anything that needs the
+real engine belongs in `engine/src/androidTest`.
+
 ## Conventions
 
 - Kotlin throughout, `ktlint_official` style, 2-space indent, 100-column lines, no wildcard imports.
