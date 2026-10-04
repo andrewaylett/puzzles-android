@@ -15,13 +15,17 @@
  */
 package uk.aylett.puzzles.engine
 
+import android.graphics.Bitmap
 import android.util.Log
+import android.view.Surface
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import uk.aylett.puzzles.engine.render.BitmapDrawingSink
+import java.util.concurrent.atomic.AtomicLong
 
 private const val DOMINOSA = "Dominosa"
 private const val LOG_TAG = "PuzzleSession"
@@ -45,12 +49,15 @@ class PuzzleSession internal constructor(
   private val me: Int,
   val game: GameInfo,
 ) : AutoCloseable {
-  private val _frames = MutableStateFlow(PuzzleFrame(bitmap = null))
+  private val _frames = MutableStateFlow(PuzzleFrame())
   val frames: StateFlow<PuzzleFrame> = _frames.asStateFlow()
 
   private val sink =
     BitmapDrawingSink(
-      onFrame = { bitmap -> publish { it.copy(bitmap = bitmap) } },
+      onFrame = { width, height ->
+        framesPresented.incrementAndGet()
+        publish { it.copy(width = width, height = height) }
+      },
       onStatus = { text -> publish { it.copy(statusText = text) } },
     )
 
@@ -99,13 +106,42 @@ class PuzzleSession internal constructor(
   }
 
   /**
-   * Bumps [PuzzleFrame.frameSeq] on every publish. Bitmap buffers are recycled rather than
-   * reallocated, so the same instance comes back with new pixels, and Compose's equality-based
-   * state comparison needs an explicit marker to notice.
+   * How many frames the mid-end has finished drawing, whether or not a surface was there to show
+   * them. Kept out of [frames] so that equality there can drop redundant updates; tests and
+   * diagnostics use it to see that drawing is happening.
    */
+  val framesPresented = AtomicLong()
+
   private fun publish(transform: (PuzzleFrame) -> PuzzleFrame) {
-    _frames.update { transform(it).copy(frameSeq = it.frameSeq + 1) }
+    _frames.update(transform)
   }
+
+  /**
+   * Starts presenting frames to [surface], filling what the puzzle doesn't cover with [background].
+   * Safe to call from the UI thread, and again whenever the surface is resized.
+   *
+   * The surface is attached immediately, so the engine thread's very next frame reaches it, but the
+   * current frame is repainted asynchronously on the engine thread, which owns the bitmap it comes
+   * from. If the engine is busy generating a game, the surface stays blank until it is free.
+   */
+  fun attachSurface(
+    surface: Surface,
+    background: Int,
+  ) {
+    sink.presenter.attach(surface, background)
+    engineThread.scope.launch { sink.represent() }
+  }
+
+  /**
+   * Stops using the surface. Once this returns the engine thread will not touch it again, which is
+   * what `surfaceDestroyed` requires, so it may be called from there on the UI thread.
+   */
+  fun detachSurface() {
+    sink.presenter.attach(null)
+  }
+
+  /** A copy of the pixels last drawn, or null before the first frame. For tests and diagnostics. */
+  suspend fun snapshot(): Bitmap? = engineThread.run { sink.snapshot() }
 
   private fun syncMeta() {
     if (!hasGame) return
@@ -594,6 +630,7 @@ class PuzzleSession internal constructor(
    */
   override fun close() {
     _animating.value = false
+    detachSurface()
     runBlocking(engineThread.dispatcher) {
       hasGame = false
       if (hooks.drawingSink === sink) hooks.drawingSink = null

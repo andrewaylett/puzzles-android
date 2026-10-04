@@ -66,7 +66,7 @@ class PuzzleEngineTest {
           session.newGame()
 
           val frame = session.frames.value
-          val bitmap = requireNotNull(frame.bitmap) { "expected a rendered frame" }
+          val bitmap = requireNotNull(session.snapshot()) { "expected a rendered frame" }
 
           assertTrue(bitmap.width > 0 && bitmap.height > 0)
           // A blank surface would mean the drawing callbacks never reached us, which is the
@@ -225,7 +225,7 @@ class PuzzleEngineTest {
           val target = leaves.firstOrNull { it.id != current } ?: leaves.first()
           session.applyPreset(target.id)
 
-          val bitmap = requireNotNull(session.frames.value.bitmap)
+          val bitmap = requireNotNull(session.snapshot())
           val pixels = IntArray(bitmap.width * bitmap.height)
           bitmap.getPixels(pixels, 0, bitmap.width, 0, 0, bitmap.width, bitmap.height)
           assertTrue(
@@ -253,7 +253,7 @@ class PuzzleEngineTest {
             engine.openGame(game.index).use { session ->
               session.resize(600, 600)
               session.newGame()
-              val bitmap = session.frames.value.bitmap
+              val bitmap = session.snapshot()
               if (bitmap == null) {
                 failures += "${game.name}: no frame"
               } else {
@@ -273,10 +273,9 @@ class PuzzleEngineTest {
   /**
    * The animation timer must actually tick.
    *
-   * Nothing else covers the `activate_timer` → `midend_timer` → redraw → publish path, and its
+   * Nothing else covers the `activate_timer` → `midend_timer` → redraw → present path, and its
    * failure mode is quiet: static puzzles look perfect while animated ones freeze. Ticking the
-   * session with no further input exercises the timer, the double-buffer swap and the frame
-   * counter together. The pacing of those ticks belongs to GameViewModel, so it is not tested here.
+   * session with no further input exercises the timer, the redraw and the frame counter together. The pacing of those ticks belongs to GameViewModel, so it is not tested here.
    */
   @Test
   fun animationTimerProducesFrames() =
@@ -290,8 +289,7 @@ class PuzzleEngineTest {
           // Sliding a tile in Fifteen animates, which is what starts the timer — but only tiles
           // next to the gap will move, and where the gap is depends on the shuffle. Try a grid of
           // points until one takes, rather than assuming a fixed spot is movable.
-          val bitmap = requireNotNull(session.frames.value.bitmap)
-          val step = bitmap.width / 4
+          val step = session.frames.value.width / 4
           outer@ for (row in 0 until 4) {
             for (col in 0 until 4) {
               val x = col * step + step / 2
@@ -307,16 +305,16 @@ class PuzzleEngineTest {
           // is what calls tick(), so stand in for it here.
           assertTrue("a sliding tile should start the timer", session.animating.value)
 
-          val afterMove = session.frames.value.frameSeq
+          val afterMove = session.framesPresented.get()
           var painted = false
           repeat(20) {
             painted = session.tick() || painted
             delay(16)
           }
-          val afterTicks = session.frames.value.frameSeq
+          val afterTicks = session.framesPresented.get()
           assertTrue("tick() never reported painting", painted)
           assertTrue(
-            "no frames published while animating ($afterMove -> $afterTicks)",
+            "no frames presented while animating ($afterMove -> $afterTicks)",
             afterTicks > afterMove,
           )
         }

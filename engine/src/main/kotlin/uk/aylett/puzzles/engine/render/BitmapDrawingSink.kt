@@ -28,18 +28,26 @@ import uk.aylett.puzzles.engine.DrawingSink
 import uk.aylett.puzzles.engine.FontType
 
 /**
- * Renders mid-end drawing calls into a retained off-screen [Bitmap], handing the UI thread an
- * immutable snapshot at the end of each batch.
+ * Renders mid-end drawing calls into a retained off-screen [Bitmap], and presents it to the UI's
+ * [android.view.Surface] at the end of each batch.
  *
  * We cannot paint into a Compose draw scope because [blitterSave] must read pixels already drawn
  * back off the surface, and Compose draw scopes are write-only. Keeping our own [Canvas] also lets
  * us serve reads and writes from the single engine thread that owns every other call into the
  * mid-end, so there is no extra synchronisation to get wrong.
+ *
+ * The bitmap never leaves the engine thread. An earlier design handed the UI a recycled pair of
+ * bitmap copies, but Compose reads a bitmap on its render thread some time after being given it, so
+ * the engine could overwrite a buffer that was still waiting to be uploaded, and a frame went
+ * missing or half-drawn until the next input. Copying into a buffer the system's queue hands us
+ * ([SurfacePresenter]) removes the sharing instead of trying to schedule around it.
  */
 class BitmapDrawingSink(
-  private val onFrame: (Bitmap) -> Unit,
+  private val onFrame: (width: Int, height: Int) -> Unit,
   private val onStatus: (String) -> Unit,
 ) : DrawingSink {
+  internal val presenter = SurfacePresenter()
+
   private var bitmap: Bitmap? = null
 
   // The mid-end draws in a density-reduced coordinate space (see PuzzleSession.scale); this is the
@@ -52,18 +60,6 @@ class BitmapDrawingSink(
   // scaled coordinates explicitly and draw through this instead of through the scaled [canvas].
   private var rawCanvas: Canvas? = null
   private var scale = 1
-
-  // Two buffers we publish into alternately, rather than one we allocate per frame. The animation
-  // loop now paces itself to the display's own refresh rate while something is actually moving —
-  // up to 120Hz on current hardware — and a fresh full-screen ARGB_8888 bitmap each time would be
-  // on the order of 8MB per frame, so allocation churn matters even more here than it did at the
-  // old fixed 20Hz. Alternating is what makes reuse safe: the UI thread may still be reading the
-  // frame we published last, so we must never write into that same buffer, only into the other
-  // one. The two `Canvas`es wrapping them are cached alongside for the same reason: a fresh
-  // `Canvas(target)` every tick is one more allocation on a path now run far more often.
-  private var publishBuffers: Array<Bitmap>? = null
-  private var publishCanvases: Array<Canvas>? = null
-  private var publishIndex = 0
 
   // Set by drawUpdate() whenever the mid-end paints something, cleared only by consumeChanged().
   // Sticky across ticks (not reset in startDraw()) so that a change made between two ticks of the
@@ -122,11 +118,19 @@ class BitmapDrawingSink(
       }
     rawCanvas = Canvas(next)
     clipMarker = null
-    val buffers = Array(2) { Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888) }
-    publishBuffers = buffers
-    publishCanvases = Array(buffers.size) { Canvas(buffers[it]) }
-    publishIndex = 0
   }
+
+  /**
+   * Presents the retained surface again without the mid-end having drawn anything, for when the UI
+   * hands us a new or resized [android.view.Surface]: its contents start empty, and the centring
+   * depends on its size. Engine thread only.
+   */
+  fun represent() {
+    bitmap?.let { presenter.present(it) }
+  }
+
+  /** A copy of the current surface, for tests and diagnostics. Engine thread only. */
+  fun snapshot(): Bitmap? = bitmap?.copy(Bitmap.Config.ARGB_8888, false)
 
   /**
    * Returns whether the mid-end has painted anything since the last call, and clears the flag.
@@ -163,17 +167,8 @@ class BitmapDrawingSink(
 
   override fun endDraw() {
     val current = bitmap ?: return
-    val buffers = publishBuffers ?: return
-    val canvases = publishCanvases ?: return
-    // Copy rather than hand over `current` directly: the mid-end draws incrementally, relying on
-    // what it painted last time still being there, so the surface it owns can never be given away.
-    // We copy it whole; `drawUpdate` tells us which parts changed, but tracking dirty regions per
-    // buffer would have to reconcile two buffers that fell out of step on different frames, and a
-    // full-surface copy is a memcpy of a few milliseconds at the sizes involved.
-    publishIndex = (publishIndex + 1) % buffers.size
-    val target = buffers[publishIndex]
-    canvases[publishIndex].drawBitmap(current, 0f, 0f, null)
-    onFrame(target)
+    presenter.present(current)
+    onFrame(current.width, current.height)
   }
 
   override fun drawText(
@@ -317,10 +312,9 @@ class BitmapDrawingSink(
     w: Int,
     h: Int,
   ) {
-    // The rectangle itself is ignored: it would let endDraw copy less, but Compose redraws the
-    // whole Image either way, so the only saving would be in the surface-to-buffer copy — already
-    // cheap next to the drawing that produced it. That the call happened at all is what we keep;
-    // see frameChanged.
+    // The rectangle itself is ignored: the surface is repainted whole on every present (see
+    // SurfacePresenter.present), so there is nothing to scope. That the call happened at all is what
+    // we keep; see frameChanged.
     frameChanged = true
   }
 

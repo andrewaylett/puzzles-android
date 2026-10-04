@@ -15,6 +15,7 @@
  */
 package uk.aylett.puzzles.ui.game
 
+import android.view.Surface
 import io.mockk.coEvery
 import io.mockk.coVerify
 import io.mockk.every
@@ -88,7 +89,7 @@ class GameViewModelTest {
       {
         mockk<PuzzleSession>(relaxUnitFun = true) {
           every { game } returns GameInfo(0, "Test", false, false, false)
-          every { frames } returns MutableStateFlow(PuzzleFrame(bitmap = null))
+          every { frames } returns MutableStateFlow(PuzzleFrame())
           every { animating } returns MutableStateFlow(false)
           coEvery { keyHints() } returns emptyList()
           coEvery { serialise() } returns byteArrayOf()
@@ -161,6 +162,42 @@ class GameViewModelTest {
     }
 
   @Test
+  fun `a live surface is handed to the replacement session after the engine is recycled`() =
+    runTest(dispatcher) {
+      engineReady.complete(engine)
+      val vm = viewModel()
+      advanceUntilIdle()
+      val surface = mockk<Surface>(relaxed = true)
+      vm.attachSurface(surface, 0x123456)
+      verify(exactly = 1) { openedSessions.single().attachSurface(surface, 0x123456) }
+
+      invalidated.emit(Unit)
+      vm.onResume()
+      advanceUntilIdle()
+
+      // Without this the new session has nowhere to present, and the screen stays blank.
+      assertEquals(2, openedSessions.size)
+      verify(exactly = 1) { openedSessions.last().attachSurface(surface, 0x123456) }
+    }
+
+  @Test
+  fun `a detached surface is not handed to a later session`() =
+    runTest(dispatcher) {
+      engineReady.complete(engine)
+      val vm = viewModel()
+      advanceUntilIdle()
+      vm.attachSurface(mockk<Surface>(relaxed = true), 0)
+      vm.detachSurface()
+      verify(exactly = 1) { openedSessions.single().detachSurface() }
+
+      invalidated.emit(Unit)
+      vm.onResume()
+      advanceUntilIdle()
+
+      verify(exactly = 0) { openedSessions.last().attachSurface(any(), any()) }
+    }
+
+  @Test
   fun `the invert control flips the swap-press setting and the state follows it`() =
     runTest(dispatcher) {
       engineReady.complete(engine)
@@ -204,7 +241,7 @@ class GameViewModelTest {
   @Test
   fun `key hints are refreshed when the game id changes`() =
     runTest(dispatcher) {
-      val frames = MutableStateFlow(PuzzleFrame(bitmap = null))
+      val frames = MutableStateFlow(PuzzleFrame())
       val session =
         mockk<PuzzleSession>(relaxUnitFun = true) {
           every { game } returns GameInfo(0, "Test", false, false, false)
@@ -224,13 +261,13 @@ class GameViewModelTest {
       advanceUntilIdle()
       assertEquals(1, vm.state.value.keyHints.size)
 
-      frames.value = PuzzleFrame(bitmap = null, gameId = "3:abc")
+      frames.value = PuzzleFrame(gameId = "3:abc")
       advanceUntilIdle()
       assertEquals(2, vm.state.value.keyHints.size)
 
       // The same params and a different seed still trigger a refresh, which is harmless; what
       // matters is that an unchanged id does not.
-      frames.value = PuzzleFrame(bitmap = null, gameId = "3:abc", canUndo = true)
+      frames.value = PuzzleFrame(gameId = "3:abc", canUndo = true)
       advanceUntilIdle()
       coVerify(exactly = 2) { session.keyHints() }
     }

@@ -15,8 +15,6 @@
  */
 package uk.aylett.puzzles.engine
 
-import android.graphics.Bitmap
-
 /**
  * One of the 40 puzzles the combined module carries.
  *
@@ -31,24 +29,24 @@ data class GameInfo(
 )
 
 /**
- * A snapshot of the puzzle for the UI to display.
+ * Everything about the puzzle the UI shows other than its pixels.
  *
- * [bitmap] is a buffer the engine thread hands over rather than the surface it keeps drawing into.
- * The buffers are recycled — an animated puzzle can redraw up to display refresh rate, and
- * allocating a fresh full-screen bitmap each frame would churn tens of megabytes a second — so the
- * *contents* of [bitmap] may change
- * identity-preservingly between frames. [frameSeq] therefore carries the change: Compose compares
- * state by equality and would never notice a mutated bitmap on its own.
+ * The pixels go straight to the UI's surface from the engine thread (see
+ * [PuzzleSession.attachSurface]) and are deliberately not part of this value: it is compared by
+ * equality, so a redraw that changes nothing here — most animation ticks — publishes nothing and
+ * costs the UI no recomposition. [width] and [height] are the physical-pixel size of what was
+ * drawn, which the UI needs to map touches back into the puzzle; both are zero until the first
+ * frame.
  */
 data class PuzzleFrame(
-  val bitmap: Bitmap?,
+  val width: Int = 0,
+  val height: Int = 0,
   val statusText: String = "",
   val canUndo: Boolean = false,
   val canRedo: Boolean = false,
   val status: Int = GameStatus.IN_PROGRESS,
   val gameId: String = "",
   val busy: Boolean = false,
-  val frameSeq: Long = 0,
 )
 
 /**

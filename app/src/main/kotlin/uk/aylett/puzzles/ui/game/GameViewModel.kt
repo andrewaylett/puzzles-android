@@ -18,6 +18,7 @@
 package uk.aylett.puzzles.ui.game
 
 import android.app.Application
+import android.view.Surface
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
@@ -85,6 +86,13 @@ class GameViewModel(
   private var gameName: String? = null
   private val pendingSize = MutableStateFlow<PendingSize?>(null)
 
+  // The surface the puzzle is presented on, held here rather than in the composable so it survives
+  // the session being replaced: after the engine is recycled, onResume opens a new session while the
+  // surface may already be live, and it has to be handed on or the screen stays blank. Main thread
+  // only, like everything else here.
+  private var surface: Surface? = null
+  private var surfaceBackground = 0
+
   /** Whether this session has a game yet, either restored from a save or freshly generated. */
   private var gameStarted = false
 
@@ -150,6 +158,7 @@ class GameViewModel(
     // start a fresh game rather than sitting on an empty session forever.
     gameStarted = savedGameStore.load(name)?.let { session.deserialise(it) == null } == true
     prefsStore.setLastPlayedName(name)
+    surface?.let { session.attachSurface(it, surfaceBackground) }
 
     _state.value =
       _state.value.copy(
@@ -247,6 +256,25 @@ class GameViewModel(
     density: Float,
   ) {
     pendingSize.value = PendingSize(widthPx, heightPx, density)
+  }
+
+  /**
+   * The UI's surface is ready, or has changed size. Frames are presented straight to it from the
+   * engine thread; nothing about them passes through [state].
+   */
+  fun attachSurface(
+    surface: Surface,
+    background: Int,
+  ) {
+    this.surface = surface
+    surfaceBackground = background
+    session?.attachSurface(surface, background)
+  }
+
+  /** The UI's surface is going away; the engine must not touch it once this returns. */
+  fun detachSurface() {
+    surface = null
+    session?.detachSurface()
   }
 
   fun pointer(

@@ -72,8 +72,31 @@ The mid-end *calls us* while `midend_redraw`/`midend_force_redraw` runs; we cann
 into a Compose draw scope. Additionally `blitter_save` must **read back** pixels already drawn.
 
 So: the engine thread draws into a retained off-screen `Bitmap` via an `android.graphics.Canvas`,
-and the UI thread is handed a snapshot to display. A blitter is just a smaller `Bitmap` holding a
-copied-out rectangle.
+and at the end of each batch (`endDraw`) copies it onto a `SurfaceView`'s `Surface` itself
+(`SurfacePresenter`: `lockCanvas`, draw, `unlockCanvasAndPost`). A blitter is just a smaller
+`Bitmap` holding a copied-out rectangle.
+
+**The bitmap never leaves the engine thread, and frames do not go through Compose.** An earlier
+design published recycled bitmap copies through a `StateFlow` and drew them with `drawImage`. That
+raced: Compose records the bitmap and its render thread reads it some time later, with nothing to
+tell us when it had finished, so the engine could overwrite a buffer still waiting to be uploaded.
+The symptom was intermittent — a change from user input missing or half-drawn until the next tap.
+Presenting through the surface's buffer queue gives real double buffering from the system, and
+removes the sharing rather than trying to schedule around it. `PuzzleFrame` therefore carries only
+metadata (status, undo state, the drawn size for touch mapping); equal frames are dropped by
+`StateFlow`, so a tick that changes none of that costs no recomposition.
+
+Surface lifetime is the delicate part. `surfaceDestroyed` runs on the main thread and promises the
+surface is unused once it returns, so `SurfacePresenter` guards just the attach/detach swap and the
+lock-draw-post span with its own small lock — never `engineThread.run`, which could be mid-way
+through a multi-second generation. `GameViewModel` holds the surface and re-attaches it to a
+replacement session after the engine is recycled. A new or resized surface starts empty, so
+attaching asks the engine thread to re-present the retained bitmap (asynchronously, since it owns
+it); until it is free the surface is blank. The surface is always repainted whole, with the theme
+background around the puzzle, because which buffer the queue returns is not ours to choose and a
+surface's untouched pixels show as black. The `SurfaceView` must never be given a fixed size: its
+buffer then equals the view size, which is what lets the centring in `SurfacePresenter` and the
+touch mapping in `PuzzleCanvas` agree to the pixel.
 
 Coordinates are physical pixels *divided by an integer scale*, not raw physical pixels. Several
 back ends draw fixed-pixel-sized UI elements that don't scale with tile size — untangle's
@@ -99,8 +122,8 @@ pixels explicitly rather than relying on the scaled `Canvas` — resampling a sa
 The rendered surface always fits the viewport the UI offered, by construction: the mid-end is asked
 to fit `viewport / scale`, and what it returns times `scale` is at most `viewport`. It can render a
 few pixels smaller than the viewport it was given — the reduced space quantises tile sizes `scale`×
-more coarsely, leaving up to `scale - 1` px unused per axis — which the existing centring in
-`PuzzleCanvas` absorbs. Puzzles are never scaled to fit and never exceed the viewport, so there is
+more coarsely, leaving up to `scale - 1` px unused per axis — which the centring in
+`SurfacePresenter` absorbs. Puzzles are never scaled to fit and never exceed the viewport, so there is
 no zoom or pan gesture to support today.
 
 ### Animation pacing

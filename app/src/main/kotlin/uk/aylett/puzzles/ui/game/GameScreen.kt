@@ -259,6 +259,8 @@ fun GameScreen(
         } else {
           PuzzleCanvas(
             frame = uiState.frame,
+            onSurfaceChanged = viewModel::attachSurface,
+            onSurfaceDestroyed = viewModel::detachSurface,
             onSizeChanged = viewModel::onSizeChanged,
             onPointerEvent = viewModel::pointer,
             modifier = Modifier.fillMaxSize(),

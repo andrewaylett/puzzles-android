@@ -15,10 +15,14 @@
  */
 package uk.aylett.puzzles.ui.game
 
-import androidx.compose.foundation.Canvas
+import android.view.Surface
+import android.view.SurfaceHolder
+import android.view.SurfaceView
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -27,7 +31,7 @@ import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.input.pointer.AwaitPointerEventScope
 import androidx.compose.ui.input.pointer.PointerEventTimeoutCancellationException
 import androidx.compose.ui.input.pointer.PointerId
@@ -37,15 +41,20 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.IntSize
+import androidx.compose.ui.viewinterop.AndroidView
 import uk.aylett.puzzles.engine.PointerAction
 import uk.aylett.puzzles.engine.PointerButton
 import uk.aylett.puzzles.engine.PuzzleFrame
 import kotlin.math.roundToInt
 
 /**
- * Displays [PuzzleFrame.bitmap] pixel-for-pixel (never scaled: the mid-end already rendered it at
- * exactly the size we asked for, so any resampling here would only blur it) and translates touch
- * gestures into the mid-end's mouse model.
+ * Hosts the [SurfaceView] the engine presents the puzzle on (pixel-for-pixel, never scaled: the
+ * mid-end already rendered it at exactly the size we asked for, so any resampling would only blur
+ * it) and translates touch gestures into the mid-end's mouse model.
+ *
+ * Nothing is drawn from here. The pixels reach the surface from the engine thread, through the
+ * system's own buffer queue, so there is no bitmap shared with Compose's render thread to race on.
+ * [frame] supplies only the drawn size, which touch mapping needs.
  *
  * The mapping, matching how every other Simon Tatham front end behaves, is decided by
  * [GestureTranslator]; this only feeds it pointer events and the long-press timeout. Several
@@ -54,31 +63,36 @@ import kotlin.math.roundToInt
 @Composable
 fun PuzzleCanvas(
   frame: PuzzleFrame,
+  onSurfaceChanged: (Surface, Int) -> Unit,
+  onSurfaceDestroyed: () -> Unit,
   onSizeChanged: (Int, Int, Float) -> Unit,
   onPointerEvent: (PointerAction, PointerButton, Int, Int) -> Unit,
   modifier: Modifier = Modifier,
   swapPressGesture: Boolean = false,
 ) {
   var canvasSize by remember { mutableStateOf(IntSize.Zero) }
-  val bitmap = frame.bitmap
   val density = LocalDensity.current.density
+
+  // Fills what the puzzle doesn't cover, so the surface matches the screen behind it; a surface's
+  // untouched pixels would otherwise show as black.
+  val background = MaterialTheme.colorScheme.background.toArgb()
 
   // The gesture handler below is keyed on Unit so it is not torn down and restarted on every
   // frame, which means it only ever sees the values from the first composition. Anything that can
-  // change afterwards — the setting toggled from the toolbar, each new frame's bitmap, the
-  // callback — has to be read through these instead of captured directly.
+  // change afterwards — the setting toggled from the toolbar, each new frame's size, the
+  // callbacks — has to be read through these instead of captured directly.
   val currentSwap = rememberUpdatedState(swapPressGesture)
-  val currentBitmap = rememberUpdatedState(bitmap)
+  val currentFrame = rememberUpdatedState(frame)
   val currentOnPointerEvent = rememberUpdatedState(onPointerEvent)
+  val currentBackground = rememberUpdatedState(background)
+  val currentOnSurfaceChanged = rememberUpdatedState(onSurfaceChanged)
+  val currentOnSurfaceDestroyed = rememberUpdatedState(onSurfaceDestroyed)
 
-  // The engine recycles bitmap buffers between frames (an animated puzzle redraws up to display
-  // refresh rate, and a fresh full-screen allocation each time would churn tens of megabytes a
-  // second), so the same Bitmap instance comes back with different pixels. Rewrapping it is keyed
-  // on frameSeq rather than the bitmap's identity, which would never change and so would never
-  // invalidate.
-  val image = remember(frame.frameSeq) { bitmap?.asImageBitmap() }
-
-  Canvas(
+  // Gestures and sizing sit on this Box rather than on the AndroidView: a SurfaceView doesn't
+  // consume touches, so they reach the parent, and the Box's size is the SurfaceView's size — the
+  // surface's buffer is that size unless a fixed size is set, which is deliberately never done, so
+  // the centring here and in SurfacePresenter agree exactly.
+  Box(
     modifier =
       modifier
         .fillMaxSize()
@@ -88,8 +102,9 @@ fun PuzzleCanvas(
         }.pointerInput(Unit) {
           awaitEachGesture {
             val down = awaitFirstDown(requireUnconsumed = false)
-            val bmp = currentBitmap.value ?: return@awaitEachGesture
-            val offset = bitmapOffset(canvasSize, bmp.width, bmp.height)
+            val drawn = currentFrame.value
+            if (drawn.width <= 0 || drawn.height <= 0) return@awaitEachGesture
+            val offset = bitmapOffset(canvasSize, drawn.width, drawn.height)
             val translator =
               GestureTranslator(
                 touchSlop = viewConfiguration.touchSlop,
@@ -137,10 +152,30 @@ fun PuzzleCanvas(
           }
         },
   ) {
-    if (bitmap != null && image != null) {
-      val offset = bitmapOffset(canvasSize, bitmap.width, bitmap.height)
-      drawImage(image, topLeft = offset)
-    }
+    AndroidView(
+      modifier = Modifier.fillMaxSize(),
+      factory = { context ->
+        SurfaceView(context).apply {
+          holder.addCallback(
+            object : SurfaceHolder.Callback {
+              // Nothing to do on creation: surfaceChanged always follows it, and is the first point
+              // at which the surface has a size to present into.
+              override fun surfaceCreated(holder: SurfaceHolder) = Unit
+
+              override fun surfaceChanged(
+                holder: SurfaceHolder,
+                format: Int,
+                width: Int,
+                height: Int,
+              ) = currentOnSurfaceChanged.value(holder.surface, currentBackground.value)
+
+              override fun surfaceDestroyed(holder: SurfaceHolder) =
+                currentOnSurfaceDestroyed.value()
+            },
+          )
+        }
+      },
+    )
   }
 }
 

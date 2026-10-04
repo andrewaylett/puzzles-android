@@ -23,7 +23,7 @@ import uk.aylett.puzzles.engine.PuzzleFrame
 data class GameUiState(
   val loading: Boolean = true,
   val game: GameInfo? = null,
-  val frame: PuzzleFrame = PuzzleFrame(bitmap = null),
+  val frame: PuzzleFrame = PuzzleFrame(),
   val keyHints: List<KeyHint> = emptyList(),
   val toastMessage: String? = null,
   val swapPressGesture: Boolean = false,
