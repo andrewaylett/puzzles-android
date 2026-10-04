@@ -206,7 +206,6 @@ fun GameScreen(
           GameOverflowMenu(
             expanded = menuExpanded,
             canSolve = uiState.game?.canSolve == true,
-            canConfigure = uiState.game?.canConfigure == true,
             onDismiss = { menuExpanded = false },
             onRestart = {
               menuExpanded = false
@@ -215,10 +214,6 @@ fun GameScreen(
             onSolve = {
               menuExpanded = false
               viewModel.solve()
-            },
-            onCustom = {
-              menuExpanded = false
-              activeDialog = ActiveDialog.SETTINGS
             },
             onPreferences = {
               menuExpanded = false
@@ -317,6 +312,12 @@ fun GameScreen(
         presets = presets,
         currentPresetId = currentId,
         onSelect = { viewModel.applyPreset(it) },
+        onCustom =
+          if (uiState.game?.canConfigure == true) {
+            { activeDialog = ActiveDialog.SETTINGS }
+          } else {
+            null
+          },
         onDismiss = { activeDialog = ActiveDialog.NONE },
       )
     }
@@ -353,11 +354,9 @@ fun GameScreen(
 private fun GameOverflowMenu(
   expanded: Boolean,
   canSolve: Boolean,
-  canConfigure: Boolean,
   onDismiss: () -> Unit,
   onRestart: () -> Unit,
   onSolve: () -> Unit,
-  onCustom: () -> Unit,
   onPreferences: () -> Unit,
   onEnterGameId: () -> Unit,
   onShareGameId: () -> Unit,
@@ -371,12 +370,6 @@ private fun GameOverflowMenu(
     )
     if (canSolve) {
       DropdownMenuItem(text = { Text(stringResource(R.string.action_solve)) }, onClick = onSolve)
-    }
-    if (canConfigure) {
-      DropdownMenuItem(
-        text = { Text(stringResource(R.string.action_custom)) },
-        onClick = onCustom,
-      )
     }
     DropdownMenuItem(
       text = { Text(stringResource(R.string.action_preferences)) },

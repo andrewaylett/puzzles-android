@@ -21,6 +21,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -41,6 +42,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.launch
 import uk.aylett.puzzles.R
@@ -115,6 +117,7 @@ private fun ConfigFieldRow(
         onValueChange = { onChange(field.copy(value = it)) },
         label = { Text(field.name) },
         singleLine = true,
+        keyboardOptions = KeyboardOptions(keyboardType = keyboardTypeFor(field)),
         modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
       )
     }
@@ -163,3 +166,23 @@ private fun ConfigFieldRow(
     }
   }
 }
+
+private val INTEGER = Regex("-?\\d+")
+private val DECIMAL = Regex("-?\\d*\\.\\d+")
+private val NUMERIC_NAMES =
+  Regex(
+    "\\b(width|height|size|columns?|rows?|number|count|regions?|moves)\\b",
+    RegexOption.IGNORE_CASE,
+  )
+
+/**
+ * The mid-end gives every text field the same `C_STRING` type, so numeric ones are indistinguishable
+ * by type. The current value is the better hint (a puzzle's defaults are always well-formed); the
+ * field name is the fallback for a value that happens to be empty.
+ */
+private fun keyboardTypeFor(field: ConfigField.Text): KeyboardType =
+  when {
+    DECIMAL.matches(field.value) -> KeyboardType.Decimal
+    INTEGER.matches(field.value) || NUMERIC_NAMES.containsMatchIn(field.name) -> KeyboardType.Number
+    else -> KeyboardType.Text
+  }

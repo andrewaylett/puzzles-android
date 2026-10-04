@@ -465,7 +465,8 @@ class WasmMidend(
     which: Int,
     cfg: Int,
   ): String? =
-    readOwnedCString(call1("midend_set_config", me.toLong(), which.toLong(), cfg.toLong()))
+    // A `const char *` static literal, so it must not be freed (see AGENTS.md).
+    readBorrowedCString(call1("midend_set_config", me.toLong(), which.toLong(), cfg.toLong()))
 
   // ---- Keys ---------------------------------------------------------------------------------
 

@@ -61,13 +61,15 @@ private fun flatten(
 /**
  * The "Type" menu: a tree of presets (several games nest a difficulty under a size, or similar),
  * flattened here into an indented list since a tree control would be overkill for at most two
- * levels.
+ * levels. "Custom…" lives at the end of the list because it is just another way of choosing a
+ * type, and is null when the game has no configurable parameters.
  */
 @Composable
 fun PresetsDialog(
   presets: List<PresetEntry>,
   currentPresetId: Int,
   onSelect: (Int) -> Unit,
+  onCustom: (() -> Unit)?,
   onDismiss: () -> Unit,
 ) {
   AlertDialog(
@@ -103,6 +105,20 @@ fun PresetsDialog(
               Spacer(modifier = Modifier.width(32.dp))
             }
             Text(entry.title)
+          }
+        }
+        if (onCustom != null) {
+          item {
+            Text(
+              text = stringResource(R.string.action_custom),
+              modifier =
+                Modifier
+                  .fillMaxWidth()
+                  .clickable {
+                    onDismiss()
+                    onCustom()
+                  }.padding(start = 16.dp, top = 12.dp, bottom = 12.dp, end = 16.dp),
+            )
           }
         }
       }

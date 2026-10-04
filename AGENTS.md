@@ -195,7 +195,7 @@ first trap, arrived at by a different route.
 `char *` returns (`midend_get_game_id`, `midend_get_random_seed`, `midend_text_format`,
 `midend_rewrite_statusbar`, `identify_game`'s out-param) are freshly allocated and must be freed.
 `const char *` returns — which is *every error message*, from `midend_solve`, `midend_game_id`,
-`midend_deserialise` and `midend_load_prefs` — are static literals in the data segment. Passing one
+`midend_deserialise`, `midend_set_config` and `midend_load_prefs` — are static literals in the data segment. Passing one
 to `free` hands the allocator a pointer it never issued.
 
 **Generate before sizing, and re-size whenever the parameters change.** `midend_size` finishes by
@@ -220,6 +220,9 @@ size, which is tuned for a desktop window and leaves a 5x5 grid as a postage sta
 makes it search for the largest tile size that fits. It returns the size it will actually draw,
 which is usually a little smaller than the space offered, so allocate the surface to the returned
 size and centre that — don't allocate the full viewport.
+
+**Config text fields carry no type.** Every `C_STRING` item looks alike, so numeric inputs (width,
+height…) are recognised in `ConfigDialog` from the current value, falling back to the field name.
 
 ## Persistence
 
