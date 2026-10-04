@@ -274,9 +274,9 @@ class PuzzleEngineTest {
    * The animation timer must actually tick.
    *
    * Nothing else covers the `activate_timer` → `midend_timer` → redraw → publish path, and its
-   * failure mode is quiet: static puzzles look perfect while animated ones freeze. Checking that
-   * frames keep arriving with no further input exercises the timer, the double-buffer swap and
-   * the frame counter together.
+   * failure mode is quiet: static puzzles look perfect while animated ones freeze. Ticking the
+   * session with no further input exercises the timer, the double-buffer swap and the frame
+   * counter together. The pacing of those ticks belongs to GameViewModel, so it is not tested here.
    */
   @Test
   fun animationTimerProducesFrames() =
@@ -303,12 +303,21 @@ class PuzzleEngineTest {
           }
           assertTrue("no tile could be moved, so nothing animated", session.frames.value.canUndo)
 
+          // The session only decides *whether* ticking should happen; GameViewModel's pacing loop
+          // is what calls tick(), so stand in for it here.
+          assertTrue("a sliding tile should start the timer", session.animating.value)
+
           val afterMove = session.frames.value.frameSeq
-          delay(500)
-          val afterWait = session.frames.value.frameSeq
+          var painted = false
+          repeat(20) {
+            painted = session.tick() || painted
+            delay(16)
+          }
+          val afterTicks = session.frames.value.frameSeq
+          assertTrue("tick() never reported painting", painted)
           assertTrue(
-            "no frames published while animating ($afterMove -> $afterWait)",
-            afterWait > afterMove,
+            "no frames published while animating ($afterMove -> $afterTicks)",
+            afterTicks > afterMove,
           )
         }
       }
