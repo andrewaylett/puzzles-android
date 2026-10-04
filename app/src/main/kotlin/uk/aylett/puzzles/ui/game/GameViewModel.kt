@@ -36,6 +36,8 @@ import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import uk.aylett.puzzles.PuzzlesApplication
 import uk.aylett.puzzles.data.AppPreferences
 import uk.aylett.puzzles.data.SavedGameStore
@@ -97,6 +99,12 @@ class GameViewModel(
   // [openSession] and the engineInvalidated collector below.
   private var sessionJob: Job? = null
 
+  // `init` and `onResume` both ask for a session, and on first launch onResume runs while init's
+  // open is still waiting on the engine. Without this they each open one, and the loser's frame,
+  // animation and sizing collectors are never cancelled — two sessions then fight over the one
+  // displayed frame, which shows as constant flashing.
+  private val openMutex = Mutex()
+
   init {
     viewModelScope.launch {
       prefsStore.swapPressGesture.collect { swapped ->
@@ -125,7 +133,12 @@ class GameViewModel(
    * recycle the shared engine while this screen is backgrounded, and [onResume] calls this again
    * to replace a session whose engine thread no longer exists.
    */
-  private suspend fun openSession() {
+  private suspend fun openSession() =
+    openMutex.withLock {
+      if (session == null) doOpenSession()
+    }
+
+  private suspend fun doOpenSession() {
     val engine = getApplication<PuzzlesApplication>().engine()
     val session = engine.openGame(gameIndex)
     this@GameViewModel.session = session

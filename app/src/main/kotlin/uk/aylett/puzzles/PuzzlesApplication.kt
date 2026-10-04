@@ -59,7 +59,8 @@ class PuzzlesApplication : Application() {
     val deferred =
       engineMutex.withLock {
         engineDeferred
-          ?: applicationScope.async { PuzzleEngine.create(this@PuzzlesApplication) }
+          ?: applicationScope
+            .async { PuzzleEngine.create(this@PuzzlesApplication) }
             .also { engineDeferred = it }
       }
     return deferred.await()
