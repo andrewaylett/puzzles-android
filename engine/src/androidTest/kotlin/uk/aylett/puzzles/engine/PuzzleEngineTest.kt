@@ -121,6 +121,23 @@ class PuzzleEngineTest {
     }
 
   @Test
+  fun everyGamesSettingsAndPreferencesCanBeRead() =
+    runBlocking {
+      PuzzleEngine.create(context).use { engine ->
+        // Settings items carry no initialised keyword in several back ends (Dominosa's trapped on
+        // an out-of-bounds read), so this sweeps all forty rather than trusting a sample.
+        for (game in engine.games) {
+          engine.openGame(game.index).use { session ->
+            session.resize(600, 600)
+            session.newGame()
+            session.config(ConfigSection.SETTINGS)
+            session.config(ConfigSection.PREFS)
+          }
+        }
+      }
+    }
+
+  @Test
   fun undoRedoRoundTrips() =
     runBlocking {
       PuzzleEngine.create(context).use { engine ->

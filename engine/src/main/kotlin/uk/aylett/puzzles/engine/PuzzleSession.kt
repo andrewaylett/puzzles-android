@@ -301,20 +301,29 @@ class PuzzleSession internal constructor(
   private fun readConfigForm(section: Int): ConfigForm {
     val (cfg, title) = midend.getConfig(me, section)
     try {
-      return ConfigForm(title, readConfigFields(cfg))
+      return ConfigForm(title, readConfigFields(cfg, readKeywords = section == ConfigSection.PREFS))
     } finally {
       midend.freeCfg(cfg)
     }
   }
 
-  private fun readConfigFields(cfg: Int): List<ConfigField> {
+  /**
+   * @param readKeywords upstream only sets `config_item.kw` for preferences, which need it to be
+   *   saved. Settings items are allocated with `snewn` and left uninitialised, so reading their
+   *   keyword dereferences whatever the heap held (Dominosa's, for one, is junk that traps with an
+   *   out-of-bounds read). The field is empty for those.
+   */
+  private fun readConfigFields(
+    cfg: Int,
+    readKeywords: Boolean,
+  ): List<ConfigField> {
     val fields = mutableListOf<ConfigField>()
     var i = 0
     while (true) {
       val type = midend.configItemType(cfg, i)
       if (type == ConfigType.END) break
       val name = midend.configItemName(cfg, i)
-      val keyword = midend.configItemKw(cfg, i)
+      val keyword = if (readKeywords) midend.configItemKw(cfg, i) else ""
       fields +=
         when (type) {
           ConfigType.STRING -> {
