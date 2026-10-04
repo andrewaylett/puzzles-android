@@ -105,6 +105,22 @@ class PuzzleEngineTest {
     }
 
   @Test
+  fun dominosaOffersNumberKeysUpToItsHighestNumber() =
+    runBlocking {
+      PuzzleEngine.create(context).use { engine ->
+        val dominosa = engine.games.first { it.name == "Dominosa" }
+        engine.openGame(dominosa.index).use { session ->
+          session.resize(600, 600)
+          session.newGame()
+          val labels = session.keyHints().map { it.label }
+          // The default preset's highest number is at least 3 and never more than 9.
+          assertTrue("expected digit chips, got $labels", labels.size in 4..10)
+          assertEquals(labels.indices.map { it.toString() }, labels)
+        }
+      }
+    }
+
+  @Test
   fun undoRedoRoundTrips() =
     runBlocking {
       PuzzleEngine.create(context).use { engine ->

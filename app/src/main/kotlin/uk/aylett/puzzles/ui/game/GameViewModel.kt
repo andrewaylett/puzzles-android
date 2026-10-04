@@ -161,7 +161,17 @@ class GameViewModel(
     sessionJob =
       viewModelScope.launch {
         launch {
-          session.frames.collect { frame -> _state.value = _state.value.copy(frame = frame) }
+          var hintsForGameId = _state.value.frame.gameId
+          session.frames.collect { frame ->
+            _state.value = _state.value.copy(frame = frame)
+            // Key hints depend on the game's parameters (Dominosa's highest number, say), which a
+            // preset or custom size changes after the session was opened; a new game id is the
+            // cheapest signal that any of that may have happened.
+            if (frame.gameId != hintsForGameId && frame.gameId.isNotEmpty()) {
+              hintsForGameId = frame.gameId
+              _state.value = _state.value.copy(keyHints = session.keyHints())
+            }
+          }
         }
 
         launch {

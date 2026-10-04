@@ -23,6 +23,7 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.runBlocking
 import uk.aylett.puzzles.engine.render.BitmapDrawingSink
 
+private const val DOMINOSA = "Dominosa"
 private const val LOG_TAG = "PuzzleSession"
 
 /** Upstream's keyword for the "keep square selected after pencil mark" preference. */
@@ -294,15 +295,17 @@ class PuzzleSession internal constructor(
       setBusy(false)
     }
 
-  suspend fun config(section: Int): ConfigForm =
-    engineThread.run {
-      val (cfg, title) = midend.getConfig(me, section)
-      try {
-        ConfigForm(title, readConfigFields(cfg))
-      } finally {
-        midend.freeCfg(cfg)
-      }
+  suspend fun config(section: Int): ConfigForm = engineThread.run { readConfigForm(section) }
+
+  /** Engine thread only. */
+  private fun readConfigForm(section: Int): ConfigForm {
+    val (cfg, title) = midend.getConfig(me, section)
+    try {
+      return ConfigForm(title, readConfigFields(cfg))
+    } finally {
+      midend.freeCfg(cfg)
     }
+  }
 
   private fun readConfigFields(cfg: Int): List<ConfigField> {
     val fields = mutableListOf<ConfigField>()
@@ -379,15 +382,39 @@ class PuzzleSession internal constructor(
     engineThread.run {
       val (keys, n) = midend.requestKeys(me)
       try {
-        (0 until n).map { i ->
-          val button = midend.keyLabelButton(keys, i)
-          val text = midend.keyLabelText(keys, i) ?: midend.currentKeyLabel(me, button)
-          KeyHint(text, button)
-        }
+        val hints =
+          (0 until n).map { i ->
+            val button = midend.keyLabelButton(keys, i)
+            val text = midend.keyLabelText(keys, i) ?: midend.currentKeyLabel(me, button)
+            KeyHint(text, button)
+          }
+        hints.ifEmpty { numberHighlightHints() }
       } finally {
         midend.freeKeys(keys, n)
       }
     }
+
+  /**
+   * Dominosa lets you highlight up to two numbers by typing them, but its back end requests no
+   * keys, so without this the only route is a long-press dead-centre on a digit — undiscoverable,
+   * and the digits are the only way to highlight on a board where that is awkward to hit. The
+   * highest number comes from the current settings rather than the game id because the id's
+   * encoding is the back end's business. Digits are single keystrokes, so a board with numbers
+   * above 9 gets chips for 0–9 only; the rest remain reachable by long-press.
+   *
+   * Engine thread only.
+   */
+  private fun numberHighlightHints(): List<KeyHint> {
+    if (game.name != DOMINOSA) return emptyList()
+    val max =
+      readConfigForm(ConfigSection.SETTINGS)
+        .fields
+        .filterIsInstance<ConfigField.Text>()
+        .firstOrNull()
+        ?.value
+        ?.toIntOrNull() ?: return emptyList()
+    return (0..minOf(max, 9)).map { KeyHint(it.toString(), '0'.code + it) }
+  }
 
   /** @return the current game's id, or an empty string if no game has been generated yet. */
   suspend fun gameId(): String = engineThread.run { if (hasGame) midend.getGameId(me) else "" }

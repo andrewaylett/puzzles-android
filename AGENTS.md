@@ -224,6 +224,16 @@ size and centre that — don't allocate the full viewport.
 **Config text fields carry no type.** Every `C_STRING` item looks alike, so numeric inputs (width,
 height…) are recognised in `ConfigDialog` from the current value, falling back to the field name.
 
+## On-screen keys
+
+`KeyRow` shows whatever `midend_request_keys` returns, which is nothing for games whose back end
+sets no `request_keys`. Dominosa is one: it accepts digit keys to highlight up to two numbers (its
+only other route is a right-click dead-centre on a digit, which a long-press hits unreliably), so
+`PuzzleSession.keyHints` synthesises `0..n` chips for it from the current settings. The highlight
+state lives in the back end's `game_ui` and is not exposed, so the chips cannot show which numbers
+are currently lit. Hints are re-fetched when the game id changes, because presets and custom sizes
+alter the parameters they depend on.
+
 ## Persistence
 
 Saved games are opaque byte strings from `wasmmid_serialise`; do not try to interpret them. They

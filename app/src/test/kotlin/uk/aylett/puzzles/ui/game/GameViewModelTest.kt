@@ -31,6 +31,7 @@ import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.setMain
 import org.junit.jupiter.api.AfterEach
+import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.BeforeEach
@@ -39,6 +40,7 @@ import uk.aylett.puzzles.EngineProvider
 import uk.aylett.puzzles.data.AppPreferences
 import uk.aylett.puzzles.data.SavedGameStore
 import uk.aylett.puzzles.engine.GameInfo
+import uk.aylett.puzzles.engine.KeyHint
 import uk.aylett.puzzles.engine.PuzzleEngine
 import uk.aylett.puzzles.engine.PuzzleFrame
 import uk.aylett.puzzles.engine.PuzzleSession
@@ -197,5 +199,39 @@ class GameViewModelTest {
 
       coVerify(exactly = 1) { openedSessions.single().loadPrefs(saved) }
       coVerify(exactly = 0) { openedSessions.single().applyPrefDefaults() }
+    }
+
+  @Test
+  fun `key hints are refreshed when the game id changes`() =
+    runTest(dispatcher) {
+      val frames = MutableStateFlow(PuzzleFrame(bitmap = null))
+      val session =
+        mockk<PuzzleSession>(relaxUnitFun = true) {
+          every { game } returns GameInfo(0, "Test", false, false, false)
+          every { this@mockk.frames } returns frames
+          every { animating } returns MutableStateFlow(false)
+          coEvery { keyHints() } returnsMany
+            listOf(
+              listOf(KeyHint("1", '1'.code)),
+              listOf(KeyHint("1", '1'.code), KeyHint("2", '2'.code)),
+            )
+          coEvery { serialise() } returns byteArrayOf()
+          coEvery { savePrefs() } returns byteArrayOf()
+        }
+      coEvery { engine.openGame(any()) } returns session
+      engineReady.complete(engine)
+      val vm = viewModel()
+      advanceUntilIdle()
+      assertEquals(1, vm.state.value.keyHints.size)
+
+      frames.value = PuzzleFrame(bitmap = null, gameId = "3:abc")
+      advanceUntilIdle()
+      assertEquals(2, vm.state.value.keyHints.size)
+
+      // The same params and a different seed still trigger a refresh, which is harmless; what
+      // matters is that an unchanged id does not.
+      frames.value = PuzzleFrame(bitmap = null, gameId = "3:abc", canUndo = true)
+      advanceUntilIdle()
+      coVerify(exactly = 2) { session.keyHints() }
     }
 }
