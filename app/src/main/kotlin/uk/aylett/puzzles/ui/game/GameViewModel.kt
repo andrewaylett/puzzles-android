@@ -144,7 +144,8 @@ class GameViewModel(
     val name = session.game.name
     gameName = name
 
-    prefsStore.loadPrefs(name)?.let { session.loadPrefs(it) }
+    val savedPrefs = prefsStore.loadPrefs(name)
+    if (savedPrefs != null) session.loadPrefs(savedPrefs) else session.applyPrefDefaults()
     // A restore only counts if it succeeded; a corrupt or stale save must still leave us able to
     // start a fresh game rather than sitting on an empty session forever.
     gameStarted = savedGameStore.load(name)?.let { session.deserialise(it) == null } == true

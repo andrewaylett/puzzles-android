@@ -174,4 +174,28 @@ class GameViewModelTest {
       advanceUntilIdle()
       assertFalse(vm.state.value.swapPressGesture)
     }
+
+  @Test
+  fun `a game with no saved prefs gets the front end's defaults`() =
+    runTest(dispatcher) {
+      engineReady.complete(engine)
+      viewModel()
+      advanceUntilIdle()
+
+      coVerify(exactly = 1) { openedSessions.single().applyPrefDefaults() }
+      coVerify(exactly = 0) { openedSessions.single().loadPrefs(any()) }
+    }
+
+  @Test
+  fun `saved prefs are loaded and the defaults do not override them`() =
+    runTest(dispatcher) {
+      val saved = byteArrayOf(1)
+      coEvery { prefs.loadPrefs(any()) } returns saved
+      engineReady.complete(engine)
+      viewModel()
+      advanceUntilIdle()
+
+      coVerify(exactly = 1) { openedSessions.single().loadPrefs(saved) }
+      coVerify(exactly = 0) { openedSessions.single().applyPrefDefaults() }
+    }
 }

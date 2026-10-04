@@ -82,6 +82,29 @@ class PuzzleEngineTest {
     }
 
   @Test
+  fun pencilHighlightDefaultsOnForGamesThatHaveIt() =
+    runBlocking {
+      PuzzleEngine.create(context).use { engine ->
+        suspend fun keepsHighlight(name: String): Boolean? =
+          engine.openGame(engine.games.first { it.name == name }.index).use { session ->
+            session.resize(600, 600)
+            session.newGame()
+            session.applyPrefDefaults()
+            session
+              .config(ConfigSection.PREFS)
+              .fields
+              .filterIsInstance<ConfigField.Toggle>()
+              .firstOrNull { it.keyword == "pencil-keep-highlight" }
+              ?.value
+          }
+
+        assertEquals(true, keepsHighlight("Towers"))
+        // Net has no pencil marks, so there is no such preference to set and nothing may break.
+        assertEquals(null, keepsHighlight("Net"))
+      }
+    }
+
+  @Test
   fun undoRedoRoundTrips() =
     runBlocking {
       PuzzleEngine.create(context).use { engine ->

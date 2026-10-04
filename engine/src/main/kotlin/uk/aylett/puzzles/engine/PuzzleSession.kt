@@ -25,6 +25,9 @@ import uk.aylett.puzzles.engine.render.BitmapDrawingSink
 
 private const val LOG_TAG = "PuzzleSession"
 
+/** Upstream's keyword for the "keep square selected after pencil mark" preference. */
+private const val KEEP_PENCIL_HIGHLIGHT_KW = "pencil-keep-highlight"
+
 /**
  * One game in progress: a `midend *` handle, the surface it draws into, and the published
  * [PuzzleFrame]s the UI observes.
@@ -441,6 +444,36 @@ class PuzzleSession internal constructor(
       val error = midend.loadPrefs(me, bytes)
       if (error != null) {
         Log.w(LOG_TAG, "loadPrefs: $error")
+      }
+    }
+
+  /**
+   * Applies this front end's preference defaults, for a game with no saved preferences.
+   *
+   * Upstream defaults `pencil-keep-highlight` off, which suits a mouse but not a finger: tapping a
+   * square and then a digit in pencil mode drops the selection after every mark, so adding several
+   * marks to one square means re-selecting it each time. Games without the preference are
+   * unaffected.
+   */
+  suspend fun applyPrefDefaults() =
+    engineThread.run {
+      val (cfg, _) = midend.getConfig(me, ConfigSection.PREFS)
+      try {
+        var changed = false
+        var i = 0
+        while (midend.configItemType(cfg, i) != ConfigType.END) {
+          if (midend.configItemKw(cfg, i) == KEEP_PENCIL_HIGHLIGHT_KW) {
+            midend.configItemSetBool(cfg, i, true)
+            changed = true
+          }
+          i++
+        }
+        if (changed) {
+          val error = midend.setConfig(me, ConfigSection.PREFS, cfg)
+          if (error != null) Log.w(LOG_TAG, "applyPrefDefaults: $error")
+        }
+      } finally {
+        midend.freeCfg(cfg)
       }
     }
 
