@@ -288,7 +288,14 @@ class PuzzleSession internal constructor(
     y: Int,
     stylus: Boolean = false,
   ) = engineThread.run {
-    midend.processKey(me, x / scale, y / scale, buttonCode(action, button, stylus))
+    // Floor, not truncate: a drag just off the top or left edge is negative, and rounding it
+    // towards zero would report it as inside the first cell.
+    midend.processKey(
+      me,
+      Math.floorDiv(x, scale),
+      Math.floorDiv(y, scale),
+      buttonCode(action, button, stylus),
+    )
     redrawAndSync()
   }
 
