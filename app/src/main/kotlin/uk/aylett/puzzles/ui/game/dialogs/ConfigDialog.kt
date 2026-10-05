@@ -180,7 +180,7 @@ private val NUMERIC_NAMES =
  * by type. The current value is the better hint (a puzzle's defaults are always well-formed); the
  * field name is the fallback for a value that happens to be empty.
  */
-private fun keyboardTypeFor(field: ConfigField.Text): KeyboardType =
+internal fun keyboardTypeFor(field: ConfigField.Text): KeyboardType =
   when {
     DECIMAL.matches(field.value) -> KeyboardType.Decimal
     INTEGER.matches(field.value) || NUMERIC_NAMES.containsMatchIn(field.name) -> KeyboardType.Number
