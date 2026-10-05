@@ -27,14 +27,26 @@ import android.view.Surface
  * thread reads the bitmap later, on its own schedule, with nothing to tell us when it has finished.
  *
  * The surface itself belongs to the UI and can vanish at any moment: `surfaceDestroyed` arrives on
- * the main thread and promises the surface is no longer used once it returns. [lock] guards only the
- * swap of [surface] and the lock-draw-post span of [present]; it is never held across a call into
- * WASM, so detaching waits at most for one buffer copy rather than for a puzzle to generate.
+ * the main thread and promises the surface is no longer used once it returns. [lock] covers the
+ * lock-draw-post span of [present] and is never held across a call into WASM, so detaching waits at
+ * most for one buffer copy rather than for a puzzle to generate.
+ *
+ * Attaching a surface must *not* take [lock]. `unlockCanvasAndPost` can block inside
+ * `BLASTBufferQueue::onFrameAvailable` until earlier frames are acknowledged, and that
+ * acknowledgement can depend on the main thread completing a layout pass. `surfaceChanged` is
+ * called from inside that pass, so waiting for [lock] there deadlocks both sides until the system
+ * reports an ANR (seen on resume). Only the final detach needs to wait for a frame in flight.
  */
 internal class SurfacePresenter {
+  private class Target(
+    val surface: Surface,
+    val background: Int,
+  )
+
   private val lock = Any()
-  private var surface: Surface? = null
-  private var background = 0
+
+  // Replaced as a unit so that present never sees a new surface with an old background.
+  @Volatile private var target: Target? = null
 
   /**
    * Replaces the target surface, or detaches with null. Callable from any thread. [background]
@@ -45,10 +57,14 @@ internal class SurfacePresenter {
     surface: Surface?,
     background: Int = 0,
   ) {
-    synchronized(lock) {
-      this.surface = surface
-      this.background = background
+    if (surface != null) {
+      // Lock-free: see the class documentation.
+      target = Target(surface, background)
+      return
     }
+    target = null
+    // Wait out any frame already being posted, so the surface is unused when this returns.
+    synchronized(lock) {}
   }
 
   /**
@@ -61,10 +77,11 @@ internal class SurfacePresenter {
    */
   fun present(bitmap: Bitmap) {
     synchronized(lock) {
-      val target = surface?.takeIf { it.isValid } ?: return
+      val current = target ?: return
+      val surface = current.surface.takeIf { it.isValid } ?: return
       val canvas =
         try {
-          target.lockCanvas(null)
+          surface.lockCanvas(null)
         } catch (_: IllegalArgumentException) {
           // Released between the validity check and the lock, which a destroy racing us can do.
           return
@@ -72,14 +89,14 @@ internal class SurfacePresenter {
           return
         }
       try {
-        canvas.drawColor(background)
+        canvas.drawColor(current.background)
         // Integer division, exactly as PuzzleCanvas's touch mapping does it: the two must agree to
         // the pixel or taps land a pixel away from what was drawn.
         val left = (canvas.width - bitmap.width) / 2
         val top = (canvas.height - bitmap.height) / 2
         canvas.drawBitmap(bitmap, left.toFloat(), top.toFloat(), null)
       } finally {
-        target.unlockCanvasAndPost(canvas)
+        surface.unlockCanvasAndPost(canvas)
       }
     }
   }

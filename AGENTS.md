@@ -89,7 +89,10 @@ metadata (status, undo state, the drawn size for touch mapping); equal frames ar
 Surface lifetime is the delicate part. `surfaceDestroyed` runs on the main thread and promises the
 surface is unused once it returns, so `SurfacePresenter` guards just the attach/detach swap and the
 lock-draw-post span with its own small lock — never `engineThread.run`, which could be mid-way
-through a multi-second generation. `GameViewModel` holds the surface and re-attaches it to a
+through a multi-second generation. Attaching a surface (`surfaceChanged`) takes no lock at all:
+`unlockCanvasAndPost` can block in `BLASTBufferQueue` until the main thread finishes a layout pass, and
+`surfaceChanged` runs *inside* that pass, so waiting for the lock there deadlocked into an ANR on
+resume. `GameViewModel` holds the surface and re-attaches it to a
 replacement session after the engine is recycled. A new or resized surface starts empty, so
 attaching asks the engine thread to re-present the retained bitmap (asynchronously, since it owns
 it); until it is free the surface is blank. The surface is always repainted whole, with the theme
