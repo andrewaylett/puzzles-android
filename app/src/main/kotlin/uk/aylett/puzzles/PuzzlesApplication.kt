@@ -17,6 +17,7 @@ package uk.aylett.puzzles
 
 import android.app.Application
 import android.content.ComponentCallbacks2
+import android.util.Log
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Dispatchers
@@ -99,7 +100,11 @@ class PuzzlesApplication :
     applicationScope.launch {
       val stale = engineMutex.withLock { engineDeferred.also { engineDeferred = null } }
       _engineInvalidated.emit(Unit)
-      stale?.await()?.close()
+      // If creating that engine failed there is nothing to close, and rethrowing here would take
+      // the whole process down while it is backgrounded, for no benefit: the next engine() call
+      // builds a fresh one regardless.
+      runCatching { stale?.await()?.close() }
+        .onFailure { Log.w("PuzzlesApplication", "Discarding the stale engine failed", it) }
     }
   }
 }
