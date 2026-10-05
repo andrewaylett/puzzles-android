@@ -105,6 +105,16 @@ class PuzzleEngineTest {
     }
 
   @Test
+  fun everyGameThatFillsPencilMarksHandlesTheKey() =
+    runBlocking {
+      PuzzleEngine.create(context).use { engine ->
+        // The allowlist is by display name, so a rename upstream would silently drop the item.
+        val names = engine.games.filter { it.canFillPencilMarks }.map { it.name }
+        assertEquals(listOf("Keen", "Solo", "Towers", "Undead", "Unequal"), names.sorted())
+      }
+    }
+
+  @Test
   fun dominosaOffersNumberKeysUpToItsHighestNumber() =
     runBlocking {
       PuzzleEngine.create(context).use { engine ->

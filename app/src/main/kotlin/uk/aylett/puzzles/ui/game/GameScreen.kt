@@ -71,6 +71,7 @@ import kotlinx.coroutines.launch
 import uk.aylett.puzzles.R
 import uk.aylett.puzzles.engine.ConfigForm
 import uk.aylett.puzzles.engine.ConfigSection
+import uk.aylett.puzzles.engine.FILL_PENCIL_MARKS_BUTTON
 import uk.aylett.puzzles.engine.GameStatus
 import uk.aylett.puzzles.engine.PresetEntry
 import uk.aylett.puzzles.ui.game.dialogs.ConfigDialog
@@ -207,6 +208,7 @@ fun GameScreen(
           GameOverflowMenu(
             expanded = menuExpanded,
             canSolve = uiState.game?.canSolve == true,
+            canFillPencilMarks = uiState.game?.canFillPencilMarks == true,
             stylusTaps = uiState.stylusTaps,
             onToggleStylusTaps = viewModel::toggleStylusTaps,
             onDismiss = { menuExpanded = false },
@@ -217,6 +219,10 @@ fun GameScreen(
             onSolve = {
               menuExpanded = false
               viewModel.solve()
+            },
+            onFillPencilMarks = {
+              menuExpanded = false
+              viewModel.key(FILL_PENCIL_MARKS_BUTTON)
             },
             onPreferences = {
               menuExpanded = false
@@ -359,11 +365,13 @@ fun GameScreen(
 private fun GameOverflowMenu(
   expanded: Boolean,
   canSolve: Boolean,
+  canFillPencilMarks: Boolean,
   stylusTaps: Boolean,
   onToggleStylusTaps: () -> Unit,
   onDismiss: () -> Unit,
   onRestart: () -> Unit,
   onSolve: () -> Unit,
+  onFillPencilMarks: () -> Unit,
   onPreferences: () -> Unit,
   onEnterGameId: () -> Unit,
   onShareGameId: () -> Unit,
@@ -377,6 +385,12 @@ private fun GameOverflowMenu(
     )
     if (canSolve) {
       DropdownMenuItem(text = { Text(stringResource(R.string.action_solve)) }, onClick = onSolve)
+    }
+    if (canFillPencilMarks) {
+      DropdownMenuItem(
+        text = { Text(stringResource(R.string.action_fill_pencil_marks)) },
+        onClick = onFillPencilMarks,
+      )
     }
     DropdownMenuItem(
       text = { Text(stringResource(R.string.action_stylus_taps)) },

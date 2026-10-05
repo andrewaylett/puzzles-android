@@ -26,7 +26,21 @@ data class GameInfo(
   val canSolve: Boolean,
   val canConfigure: Boolean,
   val canFormatAsText: Boolean,
-)
+) {
+  /**
+   * Whether the back end accepts `M` to fill every pencil mark in every empty square, for players
+   * who start from all candidates and eliminate. It is a key press with no mouse equivalent and
+   * none of these back ends list it in `request_keys`, so the UI must send it itself. `M` means
+   * something else in other games (Bridges, Flip, Galaxies, Flood, Samegame, Pearl), so this must
+   * stay an allowlist.
+   */
+  val canFillPencilMarks: Boolean get() = name in PENCIL_FILL_GAMES
+}
+
+private val PENCIL_FILL_GAMES = setOf("Solo", "Keen", "Towers", "Unequal", "Undead")
+
+/** The mid-end's button code for "fill all pencil marks" (see [GameInfo.canFillPencilMarks]). */
+const val FILL_PENCIL_MARKS_BUTTON = 'M'.code
 
 /**
  * Everything about the puzzle the UI shows other than its pixels.

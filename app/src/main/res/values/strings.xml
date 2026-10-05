@@ -23,6 +23,7 @@
   <string name="action_new_game">New game</string>
   <string name="action_restart">Restart</string>
   <string name="action_solve">Solve</string>
+  <string name="action_fill_pencil_marks">Fill pencil marks</string>
   <string name="action_type">Type&#8230;</string>
   <string name="action_swap_press_gesture">Swap tap and hold</string>
   <string name="action_stylus_taps">Taps cycle all states</string>
