@@ -61,6 +61,11 @@ class BitmapDrawingSink(
   private var rawCanvas: Canvas? = null
   private var scale = 1
 
+  // The scale the current [canvas] was built with. Tracked apart from [scale] because [scale] is
+  // updated ahead of the bitmap (see [useScale]), so comparing against it can't tell us whether
+  // the canvas transform is out of date.
+  private var canvasScale = 1
+
   // Set by drawUpdate() whenever the mid-end paints something, cleared only by consumeChanged().
   // Sticky across ticks (not reset in startDraw()) so that a change made between two ticks of the
   // pacing loop — a tap handled inline via pointer(), say — survives to be seen by the next tick,
@@ -92,6 +97,17 @@ class BitmapDrawingSink(
   private val textBounds = Rect()
 
   /**
+   * Records [scale] without touching the bitmap. This must be called *before* `midend_size`: back
+   * ends such as Inertia, Map and Pegs call `blitter_new` from inside `set_size`, and
+   * [blitterNew] sizes its bitmap by the scale in force at that moment. Learning the scale only
+   * in [resize], afterwards, left those blitters at the previous scale (1 on first sizing) while
+   * save and load multiplied coordinates by the new one.
+   */
+  fun useScale(scale: Int) {
+    this.scale = scale
+  }
+
+  /**
    * (Re)allocates the backing bitmap at [width]x[height] physical pixels, and records [scale] (the
    * mid-end's coordinate space is [width]/[scale] x [height]/[scale]) for every draw call to come
    * until the next resize. A no-op if neither has changed, since the mid-end may call this more
@@ -105,11 +121,12 @@ class BitmapDrawingSink(
     if (width <= 0 || height <= 0) return
     val current = bitmap
     if (current != null && current.width == width && current.height == height &&
-      this.scale == scale
+      canvasScale == scale
     ) {
       return
     }
     this.scale = scale
+    canvasScale = scale
     val next = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
     bitmap = next
     canvas =

@@ -210,6 +210,8 @@ class PuzzleSession internal constructor(
     // Inertia, Map, Pegs and Signpost — are the ones that notice, via an assert in set_size.
     if (!hasGame) return
     if (viewportWidth <= 0 || viewportHeight <= 0) return
+    // Before sizing, not after: set_size may allocate blitters, which are sized by this scale.
+    sink.useScale(scale)
     val (drawWidth, drawHeight) =
       midend.size(
         me,
