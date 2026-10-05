@@ -299,7 +299,15 @@ class PuzzleSession internal constructor(
   suspend fun presets(): List<PresetEntry> =
     engineThread.run {
       val menu = midend.getPresets(me)
-      readPresetMenu(menu).portrait()
+      // Reading a preset's parameters means loading them into the mid-end, which is the only way to
+      // see them; put the current ones back afterwards. midend_set_config only records parameters,
+      // so the game in progress is undisturbed.
+      val original = readConfigForm(ConfigSection.SETTINGS).fields
+      try {
+        readPresetMenu(menu)
+      } finally {
+        writeConfig(ConfigSection.SETTINGS, original)
+      }
     }
 
   private fun readPresetMenu(menu: Int): List<PresetEntry> {
@@ -311,7 +319,10 @@ class PuzzleSession internal constructor(
       if (submenu != 0) {
         PresetEntry.Submenu(title, readPresetMenu(submenu))
       } else {
-        PresetEntry.Preset(title, midend.presetMenuEntryId(menu, i))
+        val id = midend.presetMenuEntryId(menu, i)
+        midend.setParams(me, midend.presetMenuLookupById(menu, id))
+        val settings = readConfigForm(ConfigSection.SETTINGS).fields
+        PresetEntry.Preset(portraitTitle(title, settings), id)
       }
     }
   }

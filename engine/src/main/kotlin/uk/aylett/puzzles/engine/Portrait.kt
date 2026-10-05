@@ -22,17 +22,9 @@ package uk.aylett.puzzles.engine
  * symmetric under transposition, so this changes the shape of the board but not the puzzle.
  *
  * Titles and parameters are transposed separately because the mid-end owns both: the title is just
- * a string it made up, and the parameters live behind `config_item`s.
+ * a string it made up, and the parameters live behind `config_item`s. The title is only touched
+ * where it demonstrably describes the parameters (see [portraitTitle]).
  */
-private val DIMENSIONS = Regex("""\b(\d+)x(\d+)\b""")
-
-/** Rewrites each `WxH` in a preset title to put the larger dimension vertically. */
-fun portraitTitle(title: String): String =
-  DIMENSIONS.replace(title) { match ->
-    val (w, h) = match.destructured
-    if (w.toInt() > h.toInt()) "${h}x$w" else match.value
-  }
-
 private fun ConfigField.isNamed(name: String) =
   this is ConfigField.Text && this.name.equals(name, ignoreCase = true)
 
@@ -62,19 +54,29 @@ fun transposed(
   }
 }
 
-/** Applies [portraitTitle] throughout a preset tree. */
-fun List<PresetEntry>.portrait(): List<PresetEntry> =
-  map {
-    when (it) {
-      is PresetEntry.Preset -> {
-        it.copy(title = portraitTitle(it.title))
-      }
+/**
+ * Rewrites the `WxH` in a preset's title to match its transposed parameters.
+ *
+ * The title is free text, so it is only changed if it contains exactly the width and height the
+ * preset really applies — a `10x6` that means something else, or a title that doesn't mention the
+ * size at all, is left alone.
+ *
+ * @param settings the form the preset's parameters produce.
+ */
+fun portraitTitle(
+  title: String,
+  settings: List<ConfigField>,
+): String {
+  val (w, h) = settings.dimensions() ?: return title
+  val (newW, newH) = (transposed(settings) ?: return title).dimensions() ?: return title
+  return Regex("\\b${w}x$h\\b").replaceFirst(title, "${newW}x$newH")
+}
 
-      is PresetEntry.Submenu -> {
-        it.copy(
-          title = portraitTitle(it.title),
-          entries = it.entries.portrait(),
-        )
-      }
-    }
-  }
+private fun List<ConfigField>.dimensions(): Pair<Int, Int>? {
+  fun valueOf(name: String) =
+    filterIsInstance<ConfigField.Text>()
+      .singleOrNull { it.name.equals(name, ignoreCase = true) }
+      ?.value
+      ?.toIntOrNull()
+  return Pair(valueOf("width") ?: return null, valueOf("height") ?: return null)
+}

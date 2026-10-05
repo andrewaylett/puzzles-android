@@ -20,13 +20,6 @@ import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Test
 
 class PortraitTest {
-  @Test
-  fun landscapeTitlesAreTransposed() {
-    assertEquals("6x10 Easy", portraitTitle("10x6 Easy"))
-    assertEquals("15x15", portraitTitle("15x15"))
-    assertEquals("6x10", portraitTitle("6x10"))
-  }
-
   private fun form(
     w: String,
     h: String,
@@ -35,6 +28,18 @@ class PortraitTest {
     ConfigField.Text("Height", "", h),
     ConfigField.Toggle("Wrap", "", false),
   )
+
+  @Test
+  fun titleIsTransposedWhenItMatchesTheParameters() {
+    assertEquals("6x10 Easy", portraitTitle("10x6 Easy", form("10", "6")))
+  }
+
+  @Test
+  fun titleIsLeftAloneWhenItDoesNotMatchTheParameters() {
+    assertEquals("10x6 Easy", portraitTitle("10x6 Easy", form("12", "8")))
+    assertEquals("Easy", portraitTitle("Easy", form("10", "6")))
+    assertEquals("10x6 Easy", portraitTitle("10x6 Easy", form("6", "10")))
+  }
 
   @Test
   fun landscapeSettingsAreTransposed() {
