@@ -129,15 +129,23 @@ class GameViewModel(
 
     viewModelScope.launch {
       engines.engineInvalidated.collect {
-        // The engine thread behind this session is already gone, so there's nothing left to
-        // free — just drop the reference. Reopening happens lazily in onResume, the next time
-        // this screen actually needs the engine, not eagerly here while still backgrounded.
-        animationJob?.cancel()
-        animationJob = null
-        sessionJob?.cancel()
-        session = null
+        // Reopening happens lazily in onResume, the next time this screen actually needs the
+        // engine, not eagerly here while still backgrounded.
+        dropSession()
       }
     }
+  }
+
+  /**
+   * Forgets a session whose engine thread is already gone. There's nothing left to free — the
+   * whole WASM instance is garbage once dereferenced, and closing the session would try to hop
+   * onto the dead thread.
+   */
+  private fun dropSession() {
+    animationJob?.cancel()
+    animationJob = null
+    sessionJob?.cancel()
+    session = null
   }
 
   /**
@@ -348,6 +356,10 @@ class GameViewModel(
     viewModelScope.launch {
       // The engine may have been recycled while backgrounded (see the engineInvalidated
       // collector in init); reopen against the current one before resuming ticking.
+      // The engineInvalidated notification is delivered asynchronously and can lose the race with
+      // a quick return to the app, so don't rely on it having cleared the session: ask the session
+      // itself whether its engine survived.
+      if (session?.engineClosed == true) dropSession()
       if (session == null) openSession()
       session?.setPaused(false)
     }
@@ -357,8 +369,11 @@ class GameViewModel(
     val session = session ?: return
     val name = gameName ?: return
     viewModelScope.launch {
-      savedGameStore.save(name, session.serialise())
-      prefsStore.savePrefs(name, session.savePrefs())
+      // One engine task, not two: see PuzzleSession.saveState for the race with the engine
+      // being closed once the UI is hidden.
+      val state = session.saveState()
+      savedGameStore.save(name, state.game)
+      prefsStore.savePrefs(name, state.prefs)
     }
   }
 

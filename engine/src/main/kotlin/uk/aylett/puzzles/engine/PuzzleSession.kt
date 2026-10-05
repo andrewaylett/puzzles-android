@@ -568,6 +568,30 @@ class PuzzleSession internal constructor(
 
   suspend fun savePrefs(): ByteArray = engineThread.run { midend.savePrefs(me) }
 
+  /**
+   * Whether the engine this session belongs to has been closed, after which every call into it
+   * would be rejected. The shared engine is recycled when the UI is hidden, and the owner is told
+   * asynchronously, so it can still be holding a dead session when the screen comes back.
+   */
+  val engineClosed: Boolean get() = engineThread.isClosed
+
+  /** The game and its preferences, as written by [serialise] and [savePrefs]. */
+  class SavedState(
+    val game: ByteArray,
+    val prefs: ByteArray,
+  )
+
+  /**
+   * [serialise] and [savePrefs] as a single engine-thread task.
+   *
+   * The caller persists from `onPause`, racing the engine being closed on `TRIM_MEMORY_UI_HIDDEN`.
+   * Closing lets already-queued work finish but refuses anything new, so two separate calls — the
+   * second only submitted after the first returns — could lose the second. One task is queued
+   * synchronously, before the engine can be closed, and so always completes.
+   */
+  suspend fun saveState(): SavedState =
+    engineThread.run { SavedState(midend.serialise(me), midend.savePrefs(me)) }
+
   suspend fun loadPrefs(bytes: ByteArray) =
     engineThread.run {
       // wasmmid_load_prefs can report an error, but loadPrefs has no error channel of its own since

@@ -60,6 +60,10 @@ class GameViewModelTest {
   private val engine = mockk<PuzzleEngine>()
   private val openedSessions = mutableListOf<PuzzleSession>()
 
+  // What every mock session reports for engineClosed; flipped to simulate the engine being
+  // recycled without the invalidation notification having arrived yet.
+  private var engineClosedFlag = false
+
   private val engines =
     object : EngineProvider {
       override val engineInvalidated = invalidated
@@ -95,9 +99,9 @@ class GameViewModelTest {
           every { game } returns GameInfo(0, "Test", false, false, false)
           every { frames } returns MutableStateFlow(PuzzleFrame())
           every { animating } returns MutableStateFlow(false)
+          every { engineClosed } answers { engineClosedFlag }
           coEvery { keyHints() } returns emptyList()
-          coEvery { serialise() } returns byteArrayOf()
-          coEvery { savePrefs() } returns byteArrayOf()
+          coEvery { saveState() } returns PuzzleSession.SavedState(byteArrayOf(), byteArrayOf())
         }.also { openedSessions += it }
       }
   }
@@ -148,6 +152,42 @@ class GameViewModelTest {
       vm.onResume()
       advanceUntilIdle()
       coVerify(exactly = 2) { engine.openGame(any()) }
+    }
+
+  @Test
+  fun `a session whose engine closed is replaced on resume even if no notification arrived`() =
+    runTest(dispatcher) {
+      engineReady.complete(engine)
+      val vm = viewModel()
+      advanceUntilIdle()
+
+      engineClosedFlag = true // only the first session is consulted, before it is replaced
+      vm.onResume()
+      advanceUntilIdle()
+
+      coVerify(exactly = 2) { engine.openGame(any()) }
+      // The dead session is dropped, not closed or resumed.
+      verify(exactly = 0) { openedSessions.first().close() }
+      verify(exactly = 0) { openedSessions.first().setPaused(false) }
+      verify(exactly = 1) { openedSessions.last().setPaused(false) }
+    }
+
+  @Test
+  fun `onPause persists the game and prefs from a single engine call`() =
+    runTest(dispatcher) {
+      engineReady.complete(engine)
+      val vm = viewModel()
+      advanceUntilIdle()
+
+      vm.onPause()
+      advanceUntilIdle()
+
+      val session = openedSessions.single()
+      coVerify(exactly = 1) { session.saveState() }
+      coVerify(exactly = 0) { session.serialise() }
+      coVerify(exactly = 0) { session.savePrefs() }
+      coVerify { saves.save("Test", any()) }
+      coVerify { prefs.savePrefs("Test", any()) }
     }
 
   @Test
@@ -269,8 +309,7 @@ class GameViewModelTest {
               listOf(KeyHint("1", '1'.code)),
               listOf(KeyHint("1", '1'.code), KeyHint("2", '2'.code)),
             )
-          coEvery { serialise() } returns byteArrayOf()
-          coEvery { savePrefs() } returns byteArrayOf()
+          coEvery { saveState() } returns PuzzleSession.SavedState(byteArrayOf(), byteArrayOf())
         }
       coEvery { engine.openGame(any()) } returns session
       engineReady.complete(engine)

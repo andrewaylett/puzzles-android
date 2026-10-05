@@ -41,6 +41,13 @@ class EngineThread : AutoCloseable {
 
   suspend fun <T> run(block: suspend () -> T): T = withContext(dispatcher) { block() }
 
+  /**
+   * True once [close] has run. Anything holding a session can use this to notice that its engine
+   * has been recycled without having to wait for a notification, which may not have been
+   * delivered yet.
+   */
+  val isClosed: Boolean get() = executor.isShutdown
+
   override fun close() {
     scope.cancel()
     dispatcher.close()
