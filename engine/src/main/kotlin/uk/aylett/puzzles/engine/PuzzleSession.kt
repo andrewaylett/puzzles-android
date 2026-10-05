@@ -299,7 +299,7 @@ class PuzzleSession internal constructor(
   suspend fun presets(): List<PresetEntry> =
     engineThread.run {
       val menu = midend.getPresets(me)
-      readPresetMenu(menu)
+      readPresetMenu(menu).portrait()
     }
 
   private fun readPresetMenu(menu: Int): List<PresetEntry> {
@@ -316,7 +316,25 @@ class PuzzleSession internal constructor(
     }
   }
 
-  suspend fun currentPresetId(): Int = engineThread.run { midend.whichPreset(me) }
+  /**
+   * Presets are applied transposed (see [applyPreset]), so the mid-end's parameters no longer match
+   * the preset the user picked and `midend_which_preset` reports -1. Transposing them back for the
+   * duration of the lookup recovers it; `midend_set_config` only records parameters, so doing this
+   * does not disturb the game in progress.
+   */
+  suspend fun currentPresetId(): Int =
+    engineThread.run {
+      val direct = midend.whichPreset(me)
+      if (direct != -1) return@run direct
+      val original = readConfigForm(ConfigSection.SETTINGS).fields
+      val swapped = transposed(original, onlyIfLandscape = false) ?: return@run direct
+      if (writeConfig(ConfigSection.SETTINGS, swapped) != null) return@run direct
+      try {
+        midend.whichPreset(me)
+      } finally {
+        writeConfig(ConfigSection.SETTINGS, original)
+      }
+    }
 
   suspend fun applyPreset(id: Int) =
     engineThread.run {
@@ -324,6 +342,10 @@ class PuzzleSession internal constructor(
       val menu = midend.getPresets(me)
       val params = midend.presetMenuLookupById(menu, id)
       midend.setParams(me, params)
+      // Presented as portrait, so play as portrait: see [transposed].
+      transposed(readConfigForm(ConfigSection.SETTINGS).fields)?.let {
+        writeConfig(ConfigSection.SETTINGS, it)
+      }
       startNewGame()
       applySize()
       applyPalette()
@@ -393,36 +415,44 @@ class PuzzleSession internal constructor(
     fields: List<ConfigField>,
   ): String? =
     engineThread.run {
-      val (cfg, _) = midend.getConfig(me, section)
-      try {
-        fields.forEachIndexed { i, field ->
-          when (field) {
-            is ConfigField.Text -> midend.configItemSetString(cfg, i, field.value)
-            is ConfigField.Toggle -> midend.configItemSetBool(cfg, i, field.value)
-            is ConfigField.Choice -> midend.configItemSetChoice(cfg, i, field.selected)
-          }
+      val error = writeConfig(section, fields)
+      if (error == null) {
+        // midend_set_config only records the new settings; it never generates. Upstream's own
+        // front ends call midend_new_game afterwards for every section except preferences (see
+        // menu_config_event in gtk.c), and preferences are excluded because they change only how
+        // an existing game is presented, not what it is.
+        if (section != ConfigSection.PREFS) {
+          setBusy(true)
+          startNewGame()
+          applySize()
+          applyPalette()
+          midend.forceRedraw(me)
+          setBusy(false)
         }
-        val error = midend.setConfig(me, section, cfg)
-        if (error == null) {
-          // midend_set_config only records the new settings; it never generates. Upstream's own
-          // front ends call midend_new_game afterwards for every section except preferences (see
-          // menu_config_event in gtk.c), and preferences are excluded because they change only how
-          // an existing game is presented, not what it is.
-          if (section != ConfigSection.PREFS) {
-            setBusy(true)
-            startNewGame()
-            applySize()
-            applyPalette()
-            midend.forceRedraw(me)
-            setBusy(false)
-          }
-          redrawAndSync()
-        }
-        error
-      } finally {
-        midend.freeCfg(cfg)
+        redrawAndSync()
       }
+      error
     }
+
+  /** Engine thread only. @return an error message, or null on success. */
+  private fun writeConfig(
+    section: Int,
+    fields: List<ConfigField>,
+  ): String? {
+    val (cfg, _) = midend.getConfig(me, section)
+    try {
+      fields.forEachIndexed { i, field ->
+        when (field) {
+          is ConfigField.Text -> midend.configItemSetString(cfg, i, field.value)
+          is ConfigField.Toggle -> midend.configItemSetBool(cfg, i, field.value)
+          is ConfigField.Choice -> midend.configItemSetChoice(cfg, i, field.selected)
+        }
+      }
+      return midend.setConfig(me, section, cfg)
+    } finally {
+      midend.freeCfg(cfg)
+    }
+  }
 
   suspend fun keyHints(): List<KeyHint> =
     engineThread.run {

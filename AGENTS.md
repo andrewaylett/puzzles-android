@@ -255,6 +255,15 @@ size and centre that — don't allocate the full viewport.
 **Config text fields carry no type.** Every `C_STRING` item looks alike, so numeric inputs (width,
 height…) are recognised in `ConfigDialog` from the current value, falling back to the field name.
 
+## Portrait presets
+
+Upstream's presets are tuned for landscape desktop windows (`10x6`), which wastes a phone held
+upright. `PuzzleSession` therefore transposes them: titles via `portraitTitle`, and the actual
+parameters by swapping the `Width`/`Height` settings after `applyPreset` (see `Portrait.kt`). This
+is only done where exactly one integer field of each name exists, so other puzzles are untouched.
+The transposed parameters no longer match any preset, so `currentPresetId` transposes them back
+temporarily to recover the tick mark. Custom sizes are the user's own and are never swapped.
+
 ## On-screen keys
 
 `KeyRow` shows whatever `midend_request_keys` returns, which is nothing for games whose back end
