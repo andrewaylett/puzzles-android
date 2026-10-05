@@ -85,6 +85,14 @@ class PuzzleSession internal constructor(
   // roundtrips (see AGENTS.md on the four games that keep blitters).
   private var scale = 1
 
+  // [paused] is set from the UI thread (activity visibility) while [timerWanted] is set from the
+  // engine thread (the mid-end's timer hooks, which fire mid-call), and [updateAnimating] combines
+  // them. Without a common lock the two read-modify-write sequences interleave and can leave
+  // [animating] contradicting the inputs — ticking while paused, or never restarting after a
+  // resume. The lock is only ever held for these few field accesses, never across a call into
+  // WASM, so the UI thread can't be made to wait on a long generation (see AGENTS.md on surface
+  // locking for why that matters).
+  private val timerLock = Any()
   private var paused = false
   private var timerWanted = false
   private var timerStartNanos = 0L
@@ -601,21 +609,25 @@ class PuzzleSession internal constructor(
     }
 
   /** Stops or resumes ticking as the activity comes and goes. */
-  fun setPaused(paused: Boolean) {
-    this.paused = paused
-    updateAnimating()
-  }
+  fun setPaused(paused: Boolean) =
+    synchronized(timerLock) {
+      this.paused = paused
+      updateAnimating()
+    }
 
-  private fun onActivateTimer() {
-    timerWanted = true
-    updateAnimating()
-  }
+  private fun onActivateTimer() =
+    synchronized(timerLock) {
+      timerWanted = true
+      updateAnimating()
+    }
 
-  private fun onDeactivateTimer() {
-    timerWanted = false
-    updateAnimating()
-  }
+  private fun onDeactivateTimer() =
+    synchronized(timerLock) {
+      timerWanted = false
+      updateAnimating()
+    }
 
+  // Callers hold [timerLock].
   private fun updateAnimating() {
     val next = timerWanted && !paused
     // Rebase the delta clock whenever ticking (re)starts, whether that's the mid-end asking for a
@@ -644,10 +656,13 @@ class PuzzleSession internal constructor(
    */
   suspend fun tick(): Boolean =
     engineThread.run {
-      if (!hasGame || !timerWanted || paused) return@run false
-      val now = System.nanoTime()
-      val delta = (now - timerStartNanos) / 1_000_000_000f
-      timerStartNanos = now
+      if (!hasGame) return@run false
+      val delta =
+        synchronized(timerLock) {
+          if (!timerWanted || paused) return@run false
+          val now = System.nanoTime()
+          ((now - timerStartNanos) / 1_000_000_000f).also { timerStartNanos = now }
+        }
       midend.timer(me, delta)
       redrawAndSync()
       sink.consumeChanged()
