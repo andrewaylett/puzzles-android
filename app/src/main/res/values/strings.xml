@@ -25,6 +25,7 @@
   <string name="action_solve">Solve</string>
   <string name="action_type">Type&#8230;</string>
   <string name="action_swap_press_gesture">Swap tap and hold</string>
+  <string name="action_stylus_taps">Taps cycle all states</string>
   <string name="action_custom">Custom&#8230;</string>
   <string name="action_preferences">Preferences</string>
   <string name="action_enter_game_id">Enter game ID&#8230;</string>

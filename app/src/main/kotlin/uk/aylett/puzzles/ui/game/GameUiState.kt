@@ -27,4 +27,5 @@ data class GameUiState(
   val keyHints: List<KeyHint> = emptyList(),
   val toastMessage: String? = null,
   val swapPressGesture: Boolean = false,
+  val stylusTaps: Boolean = true,
 )

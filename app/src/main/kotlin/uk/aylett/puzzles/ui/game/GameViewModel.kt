@@ -119,6 +119,12 @@ class GameViewModel(
       }
     }
 
+    viewModelScope.launch {
+      prefsStore.stylusTaps.collect { enabled ->
+        _state.value = _state.value.copy(stylusTaps = enabled)
+      }
+    }
+
     viewModelScope.launch { openSession() }
 
     viewModelScope.launch {
@@ -282,7 +288,7 @@ class GameViewModel(
     button: PointerButton,
     x: Int,
     y: Int,
-  ) = act { it.pointer(action, button, x, y) }
+  ) = act { it.pointer(action, button, x, y, stylus = _state.value.stylusTaps) }
 
   fun key(button: Int) = act { it.key(button) }
 
@@ -306,6 +312,10 @@ class GameViewModel(
 
   fun toggleSwapPressGesture() {
     viewModelScope.launch { prefsStore.setSwapPressGesture(!_state.value.swapPressGesture) }
+  }
+
+  fun toggleStylusTaps() {
+    viewModelScope.launch { prefsStore.setStylusTaps(!_state.value.stylusTaps) }
   }
 
   suspend fun presets(): List<PresetEntry> = session?.presets() ?: emptyList()

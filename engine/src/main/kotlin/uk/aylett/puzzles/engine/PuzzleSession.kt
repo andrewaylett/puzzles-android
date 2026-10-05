@@ -284,8 +284,9 @@ class PuzzleSession internal constructor(
     button: PointerButton,
     x: Int,
     y: Int,
+    stylus: Boolean = false,
   ) = engineThread.run {
-    midend.processKey(me, x / scale, y / scale, buttonCode(action, button))
+    midend.processKey(me, x / scale, y / scale, buttonCode(action, button, stylus))
     redrawAndSync()
   }
 
@@ -605,6 +606,7 @@ class PuzzleSession internal constructor(
   private fun buttonCode(
     action: PointerAction,
     button: PointerButton,
+    stylus: Boolean,
   ): Int {
     val base =
       when (button) {
@@ -620,7 +622,8 @@ class PuzzleSession internal constructor(
         PointerAction.DRAG -> 3
         PointerAction.UP -> 6
       }
-    return Buttons.LEFT_BUTTON + base + offset
+    val modifier = if (stylus) Buttons.MOD_STYLUS else 0
+    return Buttons.LEFT_BUTTON + base + offset + modifier
   }
 
   /**

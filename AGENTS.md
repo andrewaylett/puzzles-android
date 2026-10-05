@@ -192,6 +192,14 @@ The mid-end expects a mouse. The established mapping is: tap → `LEFT_BUTTON` t
 long-press → `RIGHT_BUTTON` then `RIGHT_RELEASE`; drag → `LEFT_DRAG` between them. Games that set
 `REQUIRE_RBUTTON` need the long-press path to be discoverable.
 
+Pointer events also carry `MOD_STYLUS` by default (a user preference, "Taps cycle all states").
+Five games set `STYLUS_SUPPORT` — Loopy, Net, Light Up, Pattern and Tents — and with the modifier a
+single button cycles every cell state (Loopy: blank → line → crossed → blank) where without it
+left-click only toggles two and the third needs a right-click. A finger has no second button, so
+the modifier is what makes those states reachable by tapping. `midend.c` strips it for every other
+game, so it is safe to send unconditionally. It is *not* derived from touch-versus-stylus input
+type: `STYLUS_BASED` is a compile-time flag in the C, so the mid-end will never add it for us.
+
 ## Traps the mid-end sets for a new front end
 
 Every one of these cost real debugging time; they are recorded so they only cost it once.

@@ -31,6 +31,7 @@ import androidx.compose.material.icons.filled.GridView
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.SwapVert
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -206,6 +207,8 @@ fun GameScreen(
           GameOverflowMenu(
             expanded = menuExpanded,
             canSolve = uiState.game?.canSolve == true,
+            stylusTaps = uiState.stylusTaps,
+            onToggleStylusTaps = viewModel::toggleStylusTaps,
             onDismiss = { menuExpanded = false },
             onRestart = {
               menuExpanded = false
@@ -356,6 +359,8 @@ fun GameScreen(
 private fun GameOverflowMenu(
   expanded: Boolean,
   canSolve: Boolean,
+  stylusTaps: Boolean,
+  onToggleStylusTaps: () -> Unit,
   onDismiss: () -> Unit,
   onRestart: () -> Unit,
   onSolve: () -> Unit,
@@ -373,6 +378,11 @@ private fun GameOverflowMenu(
     if (canSolve) {
       DropdownMenuItem(text = { Text(stringResource(R.string.action_solve)) }, onClick = onSolve)
     }
+    DropdownMenuItem(
+      text = { Text(stringResource(R.string.action_stylus_taps)) },
+      trailingIcon = { Checkbox(checked = stylusTaps, onCheckedChange = null) },
+      onClick = onToggleStylusTaps,
+    )
     DropdownMenuItem(
       text = { Text(stringResource(R.string.action_preferences)) },
       onClick = onPreferences,

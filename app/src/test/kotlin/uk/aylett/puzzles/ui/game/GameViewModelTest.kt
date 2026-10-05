@@ -69,10 +69,14 @@ class GameViewModelTest {
 
   private val swapSetting = MutableStateFlow(false)
 
+  private val stylusSetting = MutableStateFlow(true)
+
   private val prefs =
     mockk<AppPreferences>(relaxUnitFun = true) {
       every { swapPressGesture } returns swapSetting
       coEvery { setSwapPressGesture(any()) } coAnswers { swapSetting.value = firstArg() }
+      every { stylusTaps } returns stylusSetting
+      coEvery { setStylusTaps(any()) } coAnswers { stylusSetting.value = firstArg() }
       coEvery { loadPrefs(any()) } returns null
     }
 
@@ -212,6 +216,19 @@ class GameViewModelTest {
       vm.toggleSwapPressGesture()
       advanceUntilIdle()
       assertFalse(vm.state.value.swapPressGesture)
+    }
+
+  @Test
+  fun `stylus taps are on by default and the toggle flips them`() =
+    runTest(dispatcher) {
+      engineReady.complete(engine)
+      val vm = viewModel()
+      advanceUntilIdle()
+      assertTrue(vm.state.value.stylusTaps)
+
+      vm.toggleStylusTaps()
+      advanceUntilIdle()
+      assertFalse(vm.state.value.stylusTaps)
     }
 
   @Test
