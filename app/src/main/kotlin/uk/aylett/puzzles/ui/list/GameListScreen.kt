@@ -42,6 +42,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
@@ -54,7 +55,13 @@ import uk.aylett.puzzles.engine.GameInfo
 @Composable
 fun GameListScreen(
   onGameSelected: (Int) -> Unit,
-  viewModel: GameListViewModel = viewModel(),
+  viewModel: GameListViewModel =
+    viewModel(
+      factory =
+        GameListViewModel.factory(
+          LocalContext.current.applicationContext as android.app.Application,
+        ),
+    ),
 ) {
   val uiState by viewModel.uiState.collectAsState()
 
