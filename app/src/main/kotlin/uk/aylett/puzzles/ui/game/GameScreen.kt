@@ -36,10 +36,12 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilledIconToggleButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
-import androidx.compose.material3.IconToggleButton
+import androidx.compose.material3.IconButtonDefaults
 import androidx.compose.material3.LinearProgressIndicator
+import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Snackbar
@@ -59,6 +61,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextAlign
@@ -193,9 +196,14 @@ fun GameScreen(
               contentDescription = stringResource(R.string.action_type),
             )
           }
-          IconToggleButton(
+          FilledIconToggleButton(
             checked = uiState.swapPressGesture,
             onCheckedChange = { viewModel.toggleSwapPressGesture() },
+            colors =
+              IconButtonDefaults.filledIconToggleButtonColors(
+                containerColor = Color.Transparent,
+                contentColor = LocalContentColor.current,
+              ),
           ) {
             Icon(
               Icons.Filled.SwapVert,
