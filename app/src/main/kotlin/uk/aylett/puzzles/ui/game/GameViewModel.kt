@@ -44,6 +44,7 @@ import uk.aylett.puzzles.data.AppPreferences
 import uk.aylett.puzzles.data.SavedGameStore
 import uk.aylett.puzzles.engine.ConfigField
 import uk.aylett.puzzles.engine.ConfigForm
+import uk.aylett.puzzles.engine.GameStatus
 import uk.aylett.puzzles.engine.PointerAction
 import uk.aylett.puzzles.engine.PointerButton
 import uk.aylett.puzzles.engine.PresetEntry
@@ -170,7 +171,11 @@ class GameViewModel(
     if (savedPrefs != null) session.loadPrefs(savedPrefs) else session.applyPrefDefaults()
     // A restore only counts if it succeeded; a corrupt or stale save must still leave us able to
     // start a fresh game rather than sitting on an empty session forever.
-    gameStarted = savedGameStore.load(name)?.let { session.deserialise(it) == null } == true
+    val restored = savedGameStore.load(name)?.let { session.deserialise(it) == null } == true
+    // Coming back to a finished puzzle only shows a solved board with nothing left to do, so a won
+    // game is treated as nothing to restore: leaving gameStarted false has the sizing collector
+    // below generate a fresh one. Lost games stay, as the player may want to undo the mistake.
+    gameStarted = restored && session.frames.value.status != GameStatus.WON
     prefsStore.setLastPlayedName(name)
     surface?.let { session.attachSurface(it, surfaceBackground) }
 

@@ -27,6 +27,7 @@ import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.test.StandardTestDispatcher
+import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.runTest
@@ -41,6 +42,7 @@ import uk.aylett.puzzles.EngineProvider
 import uk.aylett.puzzles.data.AppPreferences
 import uk.aylett.puzzles.data.SavedGameStore
 import uk.aylett.puzzles.engine.GameInfo
+import uk.aylett.puzzles.engine.GameStatus
 import uk.aylett.puzzles.engine.KeyHint
 import uk.aylett.puzzles.engine.PuzzleEngine
 import uk.aylett.puzzles.engine.PuzzleFrame
@@ -326,5 +328,41 @@ class GameViewModelTest {
       frames.value = PuzzleFrame(gameId = "3:abc", canUndo = true)
       advanceUntilIdle()
       coVerify(exactly = 2) { session.keyHints() }
+    }
+
+  private fun TestScope.openWithSave(status: Int): PuzzleSession {
+    val session =
+      mockk<PuzzleSession>(relaxUnitFun = true) {
+        every { game } returns GameInfo(0, "Test", false, false, false)
+        every { frames } returns MutableStateFlow(PuzzleFrame(status = status))
+        every { animating } returns MutableStateFlow(false)
+        coEvery { keyHints() } returns emptyList()
+        coEvery { deserialise(any()) } returns null
+        coEvery { saveState() } returns PuzzleSession.SavedState(byteArrayOf(), byteArrayOf())
+      }
+    coEvery { engine.openGame(any()) } returns session
+    coEvery { saves.load(any()) } returns byteArrayOf(1)
+    engineReady.complete(engine)
+    val vm = viewModel()
+    advanceUntilIdle()
+    vm.onSizeChanged(100, 100, 1f)
+    advanceUntilIdle()
+    return session
+  }
+
+  @Test
+  fun `a restored game that was already won is replaced by a new one`() =
+    runTest(dispatcher) {
+      val session = openWithSave(GameStatus.WON)
+
+      coVerify(exactly = 1) { session.newGame() }
+    }
+
+  @Test
+  fun `a restored game still in progress is kept`() =
+    runTest(dispatcher) {
+      val session = openWithSave(GameStatus.IN_PROGRESS)
+
+      coVerify(exactly = 0) { session.newGame() }
     }
 }
