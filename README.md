@@ -26,7 +26,7 @@ directly, without the NDK and without Emscripten's JavaScript glue.
 
 The compiled result — the mid-end and all forty puzzle back ends in one
 module — is `engine/wasm/puzzles-midend.wasm`, checked into
-this repository as a build artefact (~1.3MB). It is **not** executed as
+this repository as a build artefact (~0.9MB, built with `-Oz`). It is **not** executed as
 WASM at runtime, though: Android cannot load JVM bytecode it did not dex,
 so at build time the `:engine` module uses
 [Chicory](https://chicory.dev/)'s build-time compiler to translate the

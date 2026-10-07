@@ -44,7 +44,7 @@ data class GameInfo(
   val supportsStylus: Boolean get() = name in STYLUS_GAMES
 }
 
-private val STYLUS_GAMES = setOf("Loopy", "Net", "Light Up", "Pattern", "Tents")
+private val STYLUS_GAMES = setOf("Loopy", "Net", "Light Up", "Palisade", "Pattern", "Tents")
 
 private val PENCIL_FILL_GAMES = setOf("Solo", "Keen", "Towers", "Unequal", "Undead")
 

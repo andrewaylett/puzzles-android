@@ -73,10 +73,10 @@ class AppPreferences(
 
   /**
    * Whether pointer events carry the mid-end's `MOD_STYLUS` modifier. Games that set
-   * `STYLUS_SUPPORT` (Loopy, Net, Light Up, Pattern, Tents) then let a single button cycle through
-   * every cell state rather than toggling between two, so touch users can reach the third state
-   * without a long press. The mid-end ignores the modifier for every other game. On by default
-   * because a finger is a stylus-like device: there is no second button to hand.
+   * `STYLUS_SUPPORT` (Loopy, Net, Light Up, Palisade, Pattern, Tents) then let a single button
+   * cycle through every cell state rather than toggling between two, so touch users can reach the
+   * third state without a long press. The mid-end ignores the modifier for every other game. On by
+   * default because a finger is a stylus-like device: there is no second button to hand.
    */
   val stylusTaps: Flow<Boolean> = context.dataStore.data.map { it[stylusTapsKey] ?: true }
 

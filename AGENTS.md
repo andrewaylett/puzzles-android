@@ -52,8 +52,8 @@ on the same emulator, and a redraw is a few milliseconds.
 This path is verified end to end: the dexed module instantiates and runs under ART, producing game
 IDs identical to the desktop JVM.
 
-Note that the original 1.3MB `.wasm` is *not* shipped; the 154KB `.meta` plus the dexed bytecode
-replace it.
+Note that the original ~0.9MB (`-Oz`) `.wasm` is *not* shipped; the 154KB `.meta` plus the
+dexed bytecode replace it.
 
 ## Threading — the single most important rule
 
@@ -207,8 +207,8 @@ long-press → `RIGHT_BUTTON` then `RIGHT_RELEASE`; drag → `LEFT_DRAG` between
 `REQUIRE_RBUTTON` need the long-press path to be discoverable.
 
 Pointer events also carry `MOD_STYLUS` by default (a user preference, "Taps cycle all states").
-Five games set `STYLUS_SUPPORT` — Loopy, Net, Light Up, Pattern and Tents — and with the modifier a
-single button cycles every cell state (Loopy: blank → line → crossed → blank) where without it
+Six games set `STYLUS_SUPPORT` — Loopy, Net, Light Up, Palisade, Pattern and Tents —
+and with the modifier a single button cycles every cell state (Loopy: blank → line → crossed → blank) where without it
 left-click only toggles two and the third needs a right-click. A finger has no second button, so
 the modifier is what makes those states reachable by tapping. `midend.c` strips it for every other
 game, so it is safe to send unconditionally. It is *not* derived from touch-versus-stylus input
