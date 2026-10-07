@@ -294,7 +294,10 @@ fun GameScreen(
             } else {
               stringResource(R.string.status_lost)
             }
+          // Tapping the banner starts the next game: once the puzzle is over it is the obvious
+          // thing to reach for, and it saves a trip into the menu.
           Surface(
+            onClick = viewModel::newGame,
             modifier = Modifier.align(Alignment.TopCenter).padding(top = 12.dp),
             color = MaterialTheme.colorScheme.primaryContainer,
             shape = MaterialTheme.shapes.medium,
