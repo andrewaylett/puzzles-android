@@ -15,12 +15,14 @@
  */
 package uk.aylett.puzzles.ui.list
 
+import io.mockk.coVerify
 import io.mockk.every
 import io.mockk.mockk
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.resetMain
@@ -33,6 +35,7 @@ import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 import uk.aylett.puzzles.EngineProvider
+import uk.aylett.puzzles.data.AppPreferences
 import uk.aylett.puzzles.engine.GameInfo
 import uk.aylett.puzzles.engine.PuzzleEngine
 
@@ -52,6 +55,12 @@ class GameListViewModelTest {
       override suspend fun engine(): PuzzleEngine = engineReady.await()
     }
 
+  private val favourites = MutableStateFlow(emptySet<String>())
+  private val prefs =
+    mockk<AppPreferences>(relaxUnitFun = true) {
+      every { this@mockk.favourites } returns this@GameListViewModelTest.favourites
+    }
+
   @BeforeEach
   fun setUp() = Dispatchers.setMain(dispatcher)
 
@@ -61,7 +70,7 @@ class GameListViewModelTest {
   @Test
   fun loadingUntilTheEngineIsReady() =
     runTest(dispatcher) {
-      val vm = GameListViewModel(engines)
+      val vm = GameListViewModel(engines, prefs)
       advanceUntilIdle()
       assertTrue(vm.uiState.value.loading)
       assertTrue(
@@ -73,7 +82,7 @@ class GameListViewModelTest {
   @Test
   fun listsTheEnginesGamesOnceReady() =
     runTest(dispatcher) {
-      val vm = GameListViewModel(engines)
+      val vm = GameListViewModel(engines, prefs)
       engineReady.complete(
         mockk {
           every { this@mockk.games } returns
@@ -88,7 +97,7 @@ class GameListViewModelTest {
   @Test
   fun filterSurvivesLoadingAndNarrowsTheList() =
     runTest(dispatcher) {
-      val vm = GameListViewModel(engines)
+      val vm = GameListViewModel(engines, prefs)
       vm.onFilterChange("net")
       engineReady.complete(
         mockk {
@@ -102,5 +111,40 @@ class GameListViewModelTest {
         vm.uiState.value.visibleGames
           .map { it.name },
       )
+    }
+
+  @Test
+  fun favouritesSortFirstAndKeepUpstreamOrderOtherwise() =
+    runTest(dispatcher) {
+      val vm = GameListViewModel(engines, prefs)
+      engineReady.complete(
+        mockk {
+          every { this@mockk.games } returns
+            this@GameListViewModelTest.games
+        },
+      )
+      favourites.value = setOf("Solo", "Netslide")
+      advanceUntilIdle()
+      assertEquals(
+        listOf("Netslide", "Solo", "Net"),
+        vm.uiState.value.visibleGames
+          .map { it.name },
+      )
+    }
+
+  @Test
+  fun longPressStarsAnUnstarredGameAndUnstarsAStarredOne() =
+    runTest(dispatcher) {
+      val vm = GameListViewModel(engines, prefs)
+      advanceUntilIdle()
+      vm.onToggleFavourite(games[0])
+      advanceUntilIdle()
+      coVerify { prefs.setFavourite("Net", true) }
+
+      favourites.value = setOf("Net")
+      advanceUntilIdle()
+      vm.onToggleFavourite(games[0])
+      advanceUntilIdle()
+      coVerify { prefs.setFavourite("Net", false) }
     }
 }

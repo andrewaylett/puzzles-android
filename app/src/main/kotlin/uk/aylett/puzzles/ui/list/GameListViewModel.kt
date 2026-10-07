@@ -26,30 +26,35 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import uk.aylett.puzzles.EngineProvider
 import uk.aylett.puzzles.PuzzlesApplication
+import uk.aylett.puzzles.data.AppPreferences
 import uk.aylett.puzzles.engine.GameInfo
 
 data class GameListUiState(
   val games: List<GameInfo> = emptyList(),
   val loading: Boolean = true,
   val filter: String = "",
+  val favourites: Set<String> = emptySet(),
 ) {
+  /** Favourites first, otherwise upstream's order; the sort is stable so neither group shuffles. */
   val visibleGames: List<GameInfo>
     get() =
-      if (filter.isBlank()) {
-        games
-      } else {
-        games.filter { it.name.contains(filter, ignoreCase = true) }
-      }
+      games
+        .filter { filter.isBlank() || it.name.contains(filter, ignoreCase = true) }
+        .sortedByDescending { it.name in favourites }
 }
 
 /** Backs the launcher screen: the flat list of all 40 puzzles the module carries. */
 class GameListViewModel(
   private val engines: EngineProvider,
+  private val prefs: AppPreferences,
 ) : ViewModel() {
   private val _uiState = MutableStateFlow(GameListUiState())
   val uiState: StateFlow<GameListUiState> = _uiState.asStateFlow()
 
   init {
+    viewModelScope.launch {
+      prefs.favourites.collect { _uiState.value = _uiState.value.copy(favourites = it) }
+    }
     viewModelScope.launch {
       val engine = engines.engine()
       // Keep any filter typed while the engine was still loading.
@@ -61,6 +66,11 @@ class GameListViewModel(
     _uiState.value = _uiState.value.copy(filter = filter)
   }
 
+  fun onToggleFavourite(game: GameInfo) {
+    val favourite = game.name !in _uiState.value.favourites
+    viewModelScope.launch { prefs.setFavourite(game.name, favourite) }
+  }
+
   companion object {
     fun factory(application: Application): ViewModelProvider.Factory =
       object : ViewModelProvider.Factory {
@@ -69,7 +79,10 @@ class GameListViewModel(
           extras: CreationExtras,
         ): T {
           @Suppress("UNCHECKED_CAST")
-          return GameListViewModel(application as PuzzlesApplication) as T
+          return GameListViewModel(
+            application as PuzzlesApplication,
+            AppPreferences(application),
+          ) as T
         }
       }
   }

@@ -18,12 +18,14 @@ package uk.aylett.puzzles
 import android.os.Bundle
 import androidx.activity.BackEventCompat
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.PredictiveBackHandler
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.animation.core.Animatable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
@@ -47,11 +49,18 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import uk.aylett.puzzles.data.AppPreferences
+import uk.aylett.puzzles.ui.about.AboutScreen
 import uk.aylett.puzzles.ui.game.GameScreen
 import uk.aylett.puzzles.ui.list.GameListScreen
+import uk.aylett.puzzles.ui.settings.SettingsScreen
 import uk.aylett.puzzles.ui.theme.PuzzlesTheme
 
 private const val NO_GAME_SELECTED = -1
+
+/** Screens reached from the list's menu; they sit on top of it, one level deep. */
+private const val SCREEN_LIST = 0
+private const val SCREEN_SETTINGS = 1
+private const val SCREEN_ABOUT = 2
 
 // How far the open game shrinks and slides during a predictive back gesture, per the platform's
 // own convention for revealing the previous screen (see the Compose predictive-back guide).
@@ -59,7 +68,7 @@ private const val PREDICTIVE_BACK_MIN_SCALE = 0.9f
 private val PREDICTIVE_BACK_MAX_TRANSLATION = 16.dp
 private val PREDICTIVE_BACK_MAX_CORNER_RADIUS = 32.dp
 
-/** The app's single activity: it just hosts a two-screen stack (list, then one game). */
+/** The app's single activity: it hosts the list, with one game or a menu screen on top. */
 class MainActivity : ComponentActivity() {
   override fun onCreate(savedInstanceState: Bundle?) {
     super.onCreate(savedInstanceState)
@@ -75,7 +84,7 @@ class MainActivity : ComponentActivity() {
 }
 
 /**
- * Manual, two-screen navigation: `navigation-compose` isn't a dependency of this module, and a
+ * Manual navigation: `navigation-compose` isn't a dependency of this module, and a
  * single optional "which game is open" integer is all the state this app ever needs to restore.
  *
  * The last-played puzzle is remembered by name ([AppPreferences.lastPlayedName], since the
@@ -88,6 +97,10 @@ private fun PuzzlesApp() {
   val context = LocalContext.current
   var restored by rememberSaveable { mutableIntStateOf(0) } // 0 = not yet checked, 1 = checked
   var selectedGame by rememberSaveable { mutableIntStateOf(NO_GAME_SELECTED) }
+  var menuScreen by rememberSaveable { mutableIntStateOf(SCREEN_LIST) }
+  // Hoisted here, not in GameListScreen: that leaves composition while a game is open, and with it
+  // anything it remembered. This is saveable, so it also survives process death.
+  val listState = rememberLazyListState()
 
   if (restored == 0) {
     LaunchedEffect(Unit) {
@@ -129,10 +142,29 @@ private fun PuzzlesApp() {
     }
   }
 
+  BackHandler(enabled = menuScreen != SCREEN_LIST) { menuScreen = SCREEN_LIST }
+
+  when (menuScreen) {
+    SCREEN_SETTINGS -> {
+      SettingsScreen(onBack = { menuScreen = SCREEN_LIST })
+      return
+    }
+
+    SCREEN_ABOUT -> {
+      AboutScreen(onBack = { menuScreen = SCREEN_LIST })
+      return
+    }
+  }
+
   Box(modifier = Modifier.fillMaxSize()) {
     // Kept underneath throughout the gesture so the list is what the shrinking game reveals.
     if (selectedGame == NO_GAME_SELECTED || backProgress.value > 0f) {
-      GameListScreen(onGameSelected = { selectedGame = it })
+      GameListScreen(
+        onGameSelected = { selectedGame = it },
+        onOpenSettings = { menuScreen = SCREEN_SETTINGS },
+        onOpenAbout = { menuScreen = SCREEN_ABOUT },
+        listState = listState,
+      )
     }
     if (selectedGame != NO_GAME_SELECTED) {
       val progress = backProgress.value

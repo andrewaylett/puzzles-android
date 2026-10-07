@@ -20,6 +20,7 @@ import android.util.Base64
 import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.stringPreferencesKey
+import androidx.datastore.preferences.core.stringSetPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
@@ -78,6 +79,25 @@ class AppPreferences(
 
   suspend fun setStylusTaps(enabled: Boolean) {
     context.dataStore.edit { it[stylusTapsKey] = enabled }
+  }
+
+  private val favouritesKey = stringSetPreferencesKey("favourite_game_names")
+
+  /**
+   * The puzzles the user has starred, by [uk.aylett.puzzles.engine.GameInfo.name] for the same
+   * reason as [lastPlayedName]: an index would drift if upstream's ordering did.
+   */
+  val favourites: Flow<Set<String>> =
+    context.dataStore.data.map { it[favouritesKey] ?: emptySet() }
+
+  suspend fun setFavourite(
+    name: String,
+    favourite: Boolean,
+  ) {
+    context.dataStore.edit {
+      val current = it[favouritesKey] ?: emptySet()
+      it[favouritesKey] = if (favourite) current + name else current - name
+    }
   }
 
   private fun prefsKey(gameName: String) = stringPreferencesKey("prefs_$gameName")

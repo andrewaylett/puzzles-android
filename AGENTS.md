@@ -336,6 +336,15 @@ upstream montage rather than copied from any Android port, to sidestep the ambig
 on the one prior Android port's own icon set ("does not apply to the additional graphics
 distributed in the Google Play Store version").
 
+## Navigation and the puzzle list
+
+Navigation is hand-rolled in `MainActivity` (list, with a game or the Settings/About screens on
+top). `GameListScreen` leaves composition while a game is open, so its `LazyListState` is hoisted
+into `PuzzlesApp`; remembered inside the screen, the user would return to the top every time.
+Favourites (long-press a row) are stored by game name, like the last-played game, and sort to the
+top. "Settings" holds the two app-wide switches that also appear inline in the game screen; it is
+named so to keep it distinct from the per-puzzle "Preferences" dialog, which is the mid-end's.
+
 ## Testing
 
 JVM unit tests live in `app/src/test` (JUnit 5, MockK, `kotlinx-coroutines-test`); run them with
