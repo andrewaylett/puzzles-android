@@ -203,6 +203,8 @@ fun GameScreen(
               IconButtonDefaults.filledIconToggleButtonColors(
                 containerColor = Color.Transparent,
                 contentColor = LocalContentColor.current,
+                checkedContainerColor = MaterialTheme.colorScheme.primary,
+                checkedContentColor = MaterialTheme.colorScheme.onPrimary,
               ),
           ) {
             Icon(
