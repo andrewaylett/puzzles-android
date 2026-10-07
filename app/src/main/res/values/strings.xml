@@ -50,11 +50,9 @@
   <string name="setting_swap_press_gesture_detail">Tap acts as a right click, press and hold as a left click.</string>
   <string name="setting_stylus_taps_detail">In Loopy, Net, Light Up, Pattern and Tents, a tap steps through every state rather than two.</string>
   <string name="about_version">Version %1$s</string>
-  <string name="about_description">An Android front end for Simon Tatham\u2019s Portable Puzzle Collection. Every puzzle\u2019s rules, generator and solver run unmodified from the original source, compiled to WebAssembly.</string>
-  <string name="about_credits_title">Credits</string>
-  <string name="about_credits">The puzzles are the work of Simon Tatham, with contributions from Richard Boulton, James Harvey, Mike Pinna, Jonas K\u00f6lker, Dariusz Olszewski, Michael Schierl, Lambros Lambrou, Bernd Schmidt, Steffen Bauer, Lennard Sprong, Rogier Goossens, Michael Quevillon, Asher Gordon, Didi Kohen, Ben Harris and Anders H\u00f6glund. Puzzle icons are from the same collection.</string>
+  <string name="about_acknowledgement_title">Acknowledgement</string>
+  <string name="about_acknowledgement">This app would not exist without Simon Tatham\u2019s Portable Puzzle Collection. Every puzzle here \u2013 its rules, its generator, its solver, its hints \u2013 is his work and that of the contributors who have grown the collection over two decades, and runs unmodified inside this app. All this app adds is a way to hold them in your hand. Our heartfelt thanks to Simon and everyone who has contributed.</string>
+  <string name="about_licences_title">Licences</string>
   <string name="about_upstream_link">Visit the original collection</string>
-  <string name="about_licence_title">Licences</string>
-  <string name="about_licence">This app is licensed under the Apache License 2.0. The puzzle collection is \u00a9 2004\u20132024 Simon Tatham and others, and is licensed under the MIT licence. The full texts are in the LICENSE and NOTICE files of the source repository.</string>
   <string name="loading">Loading&#8230;</string>
 </resources>

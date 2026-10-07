@@ -345,6 +345,13 @@ Favourites (long-press a row) are stored by game name, like the last-played game
 top. "Settings" holds the two app-wide switches that also appear inline in the game screen; it is
 named so to keep it distinct from the per-puzzle "Preferences" dialog, which is the mid-end's.
 
+## Licences screen
+
+The About screen's licence list comes from AboutLibraries, whose Gradle plugin collects Maven
+dependencies at build time. The puzzle collection is compiled into the WASM blob, where no
+dependency graph can see it, so it is declared by hand in `config/aboutlibraries` (the MIT text
+there is copied from `NOTICE`; keep the two in step). The acknowledgement above the list is ours.
+
 ## Testing
 
 JVM unit tests live in `app/src/test` (JUnit 5, MockK, `kotlinx-coroutines-test`); run them with

@@ -1,6 +1,7 @@
 plugins {
   alias(libs.plugins.android.application)
   alias(libs.plugins.kotlin.compose)
+  alias(libs.plugins.aboutlibraries)
 }
 
 android {
@@ -49,6 +50,7 @@ dependencies {
   implementation(libs.compose.ui.graphics)
   implementation(libs.compose.material3)
   implementation(libs.compose.material.icons.extended)
+  implementation(libs.aboutlibraries.compose.m3)
   implementation(libs.compose.ui.tooling.preview)
   debugImplementation(libs.compose.ui.tooling)
 
@@ -60,6 +62,14 @@ dependencies {
   androidTestImplementation(platform(libs.compose.bom))
   androidTestImplementation(libs.androidx.test.junit)
   androidTestImplementation(libs.androidx.test.espresso.core)
+}
+
+aboutLibraries {
+  collect {
+    // The puzzle collection is compiled into the WASM blob, so no dependency graph can see it;
+    // it is declared by hand here, with its MIT text, rather than only mentioned in prose.
+    configPath = rootProject.layout.projectDirectory.dir("config/aboutlibraries")
+  }
 }
 
 tasks.withType<Test>().configureEach {

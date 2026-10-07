@@ -18,8 +18,6 @@ package uk.aylett.puzzles.ui.about
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -31,20 +29,25 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
+import com.mikepenz.aboutlibraries.ui.compose.android.produceLibraries
+import com.mikepenz.aboutlibraries.ui.compose.m3.LibrariesContainer
 import uk.aylett.puzzles.R
 
 private const val UPSTREAM_URL = "https://www.chiark.greenend.org.uk/~sgtatham/puzzles/"
 
 /**
  * Credits and licensing. The puzzles themselves are Simon Tatham's work and are MIT licensed;
- * this app is only the front end, so the credit has to say so plainly. The full licence texts
- * ship in the repository's `LICENSE` and `NOTICE` files.
+ * this app is only the front end, so the credit has to say so plainly. The formal texts come from
+ * AboutLibraries: the Maven dependencies are collected by its Gradle plugin, and the collection
+ * itself, which no dependency graph can see inside the WASM blob, is declared by hand in
+ * `config/aboutlibraries`.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -75,47 +78,39 @@ fun AboutScreen(onBack: () -> Unit) {
       )
     },
   ) { padding ->
-    Column(
-      modifier =
-        Modifier
-          .padding(padding)
-          .fillMaxSize()
-          .verticalScroll(rememberScrollState())
-          .padding(16.dp),
-    ) {
-      Text(stringResource(R.string.app_name), style = MaterialTheme.typography.headlineMedium)
-      Text(
-        stringResource(R.string.about_version, version),
-        style = MaterialTheme.typography.bodyMedium,
-      )
-      Text(
-        stringResource(R.string.about_description),
-        style = MaterialTheme.typography.bodyLarge,
-        modifier = Modifier.padding(top = 16.dp),
-      )
-      Text(
-        stringResource(R.string.about_credits_title),
-        style = MaterialTheme.typography.titleMedium,
-        modifier = Modifier.padding(top = 24.dp),
-      )
-      Text(
-        stringResource(R.string.about_credits),
-        style = MaterialTheme.typography.bodyMedium,
-        modifier = Modifier.padding(top = 8.dp),
-      )
-      TextButton(onClick = { uriHandler.openUri(UPSTREAM_URL) }) {
-        Text(stringResource(R.string.about_upstream_link))
-      }
-      Text(
-        stringResource(R.string.about_licence_title),
-        style = MaterialTheme.typography.titleMedium,
-        modifier = Modifier.padding(top = 16.dp),
-      )
-      Text(
-        stringResource(R.string.about_licence),
-        style = MaterialTheme.typography.bodyMedium,
-        modifier = Modifier.padding(top = 8.dp),
-      )
-    }
+    val libraries by produceLibraries(R.raw.aboutlibraries)
+    LibrariesContainer(
+      libraries = libraries,
+      modifier = Modifier.padding(padding).fillMaxSize(),
+      header = {
+        item {
+          Column(modifier = Modifier.padding(16.dp)) {
+            Text(stringResource(R.string.app_name), style = MaterialTheme.typography.headlineMedium)
+            Text(
+              stringResource(R.string.about_version, version),
+              style = MaterialTheme.typography.bodyMedium,
+            )
+            Text(
+              stringResource(R.string.about_acknowledgement_title),
+              style = MaterialTheme.typography.titleMedium,
+              modifier = Modifier.padding(top = 24.dp),
+            )
+            Text(
+              stringResource(R.string.about_acknowledgement),
+              style = MaterialTheme.typography.bodyLarge,
+              modifier = Modifier.padding(top = 8.dp),
+            )
+            TextButton(onClick = { uriHandler.openUri(UPSTREAM_URL) }) {
+              Text(stringResource(R.string.about_upstream_link))
+            }
+            Text(
+              stringResource(R.string.about_licences_title),
+              style = MaterialTheme.typography.titleMedium,
+              modifier = Modifier.padding(top = 8.dp),
+            )
+          }
+        }
+      },
+    )
   }
 }

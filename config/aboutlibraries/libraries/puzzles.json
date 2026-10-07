@@ -1,0 +1,16 @@
+{
+  "uniqueId": "uk.org.chiark.sgtatham:puzzles",
+  "name": "Simon Tatham's Portable Puzzle Collection",
+  "description": "The foundation of this app: every puzzle's rules, generator and solver, built unmodified from upstream source to WebAssembly.",
+  "developers": [
+    {
+      "name": "Simon Tatham",
+      "organisationUrl": "https://www.chiark.greenend.org.uk/~sgtatham/puzzles/"
+    }
+  ],
+  "website": "https://www.chiark.greenend.org.uk/~sgtatham/puzzles/",
+  "licenses": [
+    "puzzles-mit"
+  ],
+  "tag": "foundation"
+}
