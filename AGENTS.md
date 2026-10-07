@@ -297,6 +297,34 @@ carry their own game identity, which `wasmmid_identify_game` can sniff without d
 upstream's `list.c` ordering and will shift the moment upstream adds a puzzle, silently reopening
 the wrong game from a stale preference.
 
+## Settings
+
+Every setting lives in one place, the Settings screen; a puzzle's own Preferences dialog is the
+subset of those that it has. They are two views of the same stored values.
+
+The mid-end's preferences are per game (an opaque blob each), but many are really the same setting
+in several games — "keep highlight after a pencil mark" is in five — and users expect to set those
+once. So preferences are stored by *identity* in `AppPreferences.sharedSettings` and overlaid onto
+every session when it opens (`data/SharedSettings.kt`). The per-game blob remains, but a stored
+value always wins over it.
+
+- **Identity is keyword + label + choice labels, never keyword alone.** Upstream reuses
+  `flash-type`, `appearance` and the mouse-button keywords for options that mean different things in
+  different games; merging by keyword would apply one game's choice to another's unrelated list.
+  Choices are stored by label, not index, so upstream reordering cannot select a different option.
+- **A `GameViewModel` outlives a trip to Settings** (it is activity-scoped, and navigation here is
+  hand-rolled), and so does its session. Without a live overlay the session keeps stale values and
+  `persist()` writes them straight back over what Settings just changed. Hence the
+  `sharedSettings` collector in `GameViewModel`, and `applyConfig` writing PREFS back to the store.
+- **The catalogue is discovered, not hard-coded:** `SettingsViewModel` opens every puzzle without
+  generating a game and reads its PREFS. Anything not yet stored is then stored with the value just
+  resolved — puzzles that disagreed (they were configured separately before pooling) take the first
+  puzzle's value, so Settings shows one value and every puzzle then agrees with it.
+- Range's and Slant's "mouse button order" sit under touch controls, not their puzzle: they compose
+  with the app's tap/hold swap, so enabling both swaps the buttons twice.
+- "Taps cycle all states" is only offered in a puzzle that sets `STYLUS_SUPPORT`
+  (`GameInfo.supportsStylus`, an allowlist for the same reason as `canFillPencilMarks`).
+
 ## Engine lifecycle
 
 The shared `PuzzleEngine` (WASM instance plus its dedicated thread) is discarded and lazily rebuilt

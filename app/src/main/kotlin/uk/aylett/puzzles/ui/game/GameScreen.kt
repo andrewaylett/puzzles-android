@@ -219,6 +219,7 @@ fun GameScreen(
             expanded = menuExpanded,
             canSolve = uiState.game?.canSolve == true,
             canFillPencilMarks = uiState.game?.canFillPencilMarks == true,
+            showStylusTaps = uiState.game?.supportsStylus == true,
             stylusTaps = uiState.stylusTaps,
             onToggleStylusTaps = viewModel::toggleStylusTaps,
             onDismiss = { menuExpanded = false },
@@ -379,6 +380,7 @@ private fun GameOverflowMenu(
   expanded: Boolean,
   canSolve: Boolean,
   canFillPencilMarks: Boolean,
+  showStylusTaps: Boolean,
   stylusTaps: Boolean,
   onToggleStylusTaps: () -> Unit,
   onDismiss: () -> Unit,
@@ -405,11 +407,13 @@ private fun GameOverflowMenu(
         onClick = onFillPencilMarks,
       )
     }
-    DropdownMenuItem(
-      text = { Text(stringResource(R.string.action_stylus_taps)) },
-      trailingIcon = { Checkbox(checked = stylusTaps, onCheckedChange = null) },
-      onClick = onToggleStylusTaps,
-    )
+    if (showStylusTaps) {
+      DropdownMenuItem(
+        text = { Text(stringResource(R.string.action_stylus_taps)) },
+        trailingIcon = { Checkbox(checked = stylusTaps, onCheckedChange = null) },
+        onClick = onToggleStylusTaps,
+      )
+    }
     DropdownMenuItem(
       text = { Text(stringResource(R.string.action_preferences)) },
       onClick = onPreferences,

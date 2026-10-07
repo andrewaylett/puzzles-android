@@ -37,6 +37,9 @@ private val Context.dataStore by preferencesDataStore(name = "puzzles_prefs")
  * upstream's `list.c` ordering, which shifts if a puzzle is ever added or removed there, and a
  * stale index would silently reopen the wrong game.
  *
+ * Preferences that several games share are additionally held once, by identity, in
+ * [sharedSettings]; those values win over the per-game bytes whenever a session is opened.
+ *
  * Mid-end prefs are opaque bytes ([uk.aylett.puzzles.engine.PuzzleSession.savePrefs]); Preferences
  * DataStore has no byte-array type, so they are stored base64-encoded.
  */
@@ -97,6 +100,32 @@ class AppPreferences(
     context.dataStore.edit {
       val current = it[favouritesKey] ?: emptySet()
       it[favouritesKey] = if (favourite) current + name else current - name
+    }
+  }
+
+  private val settingPrefix = "setting:"
+
+  /**
+   * Preference values shared between games, by identity (see [settingId]). Absent means the user
+   * has never chosen, in which case each game keeps whatever its own saved preferences say.
+   */
+  val sharedSettings: Flow<Map<String, String>> =
+    context.dataStore.data.map { all ->
+      all
+        .asMap()
+        .mapNotNull { (key, value) ->
+          if (key.name.startsWith(settingPrefix) && value is String) {
+            key.name.removePrefix(settingPrefix) to value
+          } else {
+            null
+          }
+        }.toMap()
+    }
+
+  suspend fun setSharedSettings(values: Map<String, String>) {
+    if (values.isEmpty()) return
+    context.dataStore.edit { prefs ->
+      values.forEach { (id, value) -> prefs[stringPreferencesKey(settingPrefix + id)] = value }
     }
   }
 

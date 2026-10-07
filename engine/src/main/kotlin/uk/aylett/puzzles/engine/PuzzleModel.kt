@@ -35,7 +35,16 @@ data class GameInfo(
    * stay an allowlist.
    */
   val canFillPencilMarks: Boolean get() = name in PENCIL_FILL_GAMES
+
+  /**
+   * Whether the back end sets `STYLUS_SUPPORT`, the only case in which the mid-end acts on
+   * `MOD_STYLUS`. `STYLUS_SUPPORT` is a compile-time flag the mid-end does not expose, so this is
+   * an allowlist; offering the "taps cycle all states" switch anywhere else would do nothing.
+   */
+  val supportsStylus: Boolean get() = name in STYLUS_GAMES
 }
+
+private val STYLUS_GAMES = setOf("Loopy", "Net", "Light Up", "Pattern", "Tents")
 
 private val PENCIL_FILL_GAMES = setOf("Solo", "Keen", "Towers", "Unequal", "Undead")
 

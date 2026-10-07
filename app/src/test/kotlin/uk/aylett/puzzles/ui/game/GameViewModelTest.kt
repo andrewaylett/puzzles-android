@@ -41,6 +41,10 @@ import org.junit.jupiter.api.Test
 import uk.aylett.puzzles.EngineProvider
 import uk.aylett.puzzles.data.AppPreferences
 import uk.aylett.puzzles.data.SavedGameStore
+import uk.aylett.puzzles.data.settingId
+import uk.aylett.puzzles.engine.ConfigField
+import uk.aylett.puzzles.engine.ConfigForm
+import uk.aylett.puzzles.engine.ConfigSection
 import uk.aylett.puzzles.engine.GameInfo
 import uk.aylett.puzzles.engine.GameStatus
 import uk.aylett.puzzles.engine.KeyHint
@@ -84,6 +88,7 @@ class GameViewModelTest {
       every { stylusTaps } returns stylusSetting
       coEvery { setStylusTaps(any()) } coAnswers { stylusSetting.value = firstArg() }
       coEvery { loadPrefs(any()) } returns null
+      every { sharedSettings } returns MutableStateFlow(emptyMap())
     }
 
   private val saves =
@@ -103,6 +108,7 @@ class GameViewModelTest {
           every { animating } returns MutableStateFlow(false)
           every { engineClosed } answers { engineClosedFlag }
           coEvery { keyHints() } returns emptyList()
+          coEvery { config(any()) } returns ConfigForm("Preferences", emptyList())
           coEvery { saveState() } returns PuzzleSession.SavedState(byteArrayOf(), byteArrayOf())
         }.also { openedSessions += it }
       }
@@ -311,6 +317,7 @@ class GameViewModelTest {
               listOf(KeyHint("1", '1'.code)),
               listOf(KeyHint("1", '1'.code), KeyHint("2", '2'.code)),
             )
+          coEvery { config(any()) } returns ConfigForm("Preferences", emptyList())
           coEvery { saveState() } returns PuzzleSession.SavedState(byteArrayOf(), byteArrayOf())
         }
       coEvery { engine.openGame(any()) } returns session
@@ -337,6 +344,7 @@ class GameViewModelTest {
         every { frames } returns MutableStateFlow(PuzzleFrame(status = status))
         every { animating } returns MutableStateFlow(false)
         coEvery { keyHints() } returns emptyList()
+        coEvery { config(any()) } returns ConfigForm("Preferences", emptyList())
         coEvery { deserialise(any()) } returns null
         coEvery { saveState() } returns PuzzleSession.SavedState(byteArrayOf(), byteArrayOf())
       }
@@ -364,5 +372,38 @@ class GameViewModelTest {
       val session = openWithSave(GameStatus.IN_PROGRESS)
 
       coVerify(exactly = 0) { session.newGame() }
+    }
+
+  @Test
+  fun `a changed shared setting is pushed into the live session`() =
+    runTest(dispatcher) {
+      val toggle = ConfigField.Toggle("Keep", "pencil-keep-highlight", false)
+      val stored = MutableStateFlow(emptyMap<String, String>())
+      every { prefs.sharedSettings } returns stored
+      engineReady.complete(engine)
+      viewModel()
+      advanceUntilIdle()
+      val session = openedSessions.single()
+      coEvery { session.config(any()) } returns ConfigForm("Preferences", listOf(toggle))
+      coEvery { session.applyConfig(any(), any()) } returns null
+
+      stored.value = mapOf(toggle.settingId()!! to "true")
+      advanceUntilIdle()
+
+      coVerify { session.applyConfig(ConfigSection.PREFS, listOf(toggle.copy(value = true))) }
+    }
+
+  @Test
+  fun `applying preferences records them as shared settings`() =
+    runTest(dispatcher) {
+      val toggle = ConfigField.Toggle("Keep", "pencil-keep-highlight", true)
+      engineReady.complete(engine)
+      val vm = viewModel()
+      advanceUntilIdle()
+      coEvery { openedSessions.single().applyConfig(any(), any()) } returns null
+
+      vm.applyConfig(ConfigSection.PREFS, listOf(toggle))
+
+      coVerify { prefs.setSharedSettings(mapOf(toggle.settingId()!! to "true")) }
     }
 }

@@ -49,6 +49,11 @@
   <string name="favourite">Favourite</string>
   <string name="setting_swap_press_gesture_detail">Tap acts as a right click, press and hold as a left click.</string>
   <string name="setting_stylus_taps_detail">In Loopy, Net, Light Up, Pattern and Tents, a tap steps through every state rather than two.</string>
+  <string name="settings_section_touch">Touch controls</string>
+  <string name="settings_section_all">All puzzles</string>
+  <string name="settings_section_shared">Several puzzles</string>
+  <string name="settings_affects">Affects: %1$s.</string>
+  <string name="settings_controls_note">Applied after \u201cSwap tap and hold\u201d, so using both swaps the buttons twice.</string>
   <string name="about_version">Version %1$s</string>
   <string name="about_acknowledgement_title">Acknowledgement</string>
   <string name="about_acknowledgement">This app would not exist without Simon Tatham\u2019s Portable Puzzle Collection. Every puzzle here \u2013 its rules, its generator, its solver, its hints \u2013 is his work and that of the contributors who have grown the collection over two decades, and runs unmodified inside this app. All this app adds is a way to hold them in your hand. Our heartfelt thanks to Simon and everyone who has contributed.</string>

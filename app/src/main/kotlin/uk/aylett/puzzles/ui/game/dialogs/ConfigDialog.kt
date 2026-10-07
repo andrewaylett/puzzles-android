@@ -106,7 +106,7 @@ fun ConfigDialog(
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun ConfigFieldRow(
+internal fun ConfigFieldRow(
   field: ConfigField,
   onChange: (ConfigField) -> Unit,
 ) {

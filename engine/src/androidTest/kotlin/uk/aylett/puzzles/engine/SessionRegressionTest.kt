@@ -77,6 +77,25 @@ class SessionRegressionTest {
     assertEquals(red, bitmap.getPixel(19, 19))
   }
 
+  /**
+   * The Settings screen reads every puzzle's preferences without generating a game, which only
+   * works if each back end copes with a gameless mid-end (upstream builds a temporary `game_ui`).
+   * Several keywords are shared between puzzles, and `one-key-shortcuts` comes from the mid-end
+   * itself, so every puzzle must report it.
+   */
+  @Test
+  fun everyPuzzleReportsPreferencesWithoutAGame() =
+    runBlocking {
+      PuzzleEngine.create(context).use { engine ->
+        engine.games.forEach { game ->
+          engine.openGame(game.index).use { session ->
+            val keywords = session.config(ConfigSection.PREFS).fields.map { it.keyword }
+            assertTrue("${game.name}: $keywords", "one-key-shortcuts" in keywords)
+          }
+        }
+      }
+    }
+
   @Test
   fun saveStateMatchesSerialiseAndSavePrefs() =
     runBlocking {

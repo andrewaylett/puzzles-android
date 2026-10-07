@@ -34,6 +34,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.flow.filterNotNull
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
@@ -42,8 +43,11 @@ import uk.aylett.puzzles.EngineProvider
 import uk.aylett.puzzles.PuzzlesApplication
 import uk.aylett.puzzles.data.AppPreferences
 import uk.aylett.puzzles.data.SavedGameStore
+import uk.aylett.puzzles.data.overlay
+import uk.aylett.puzzles.data.toSettings
 import uk.aylett.puzzles.engine.ConfigField
 import uk.aylett.puzzles.engine.ConfigForm
+import uk.aylett.puzzles.engine.ConfigSection
 import uk.aylett.puzzles.engine.GameStatus
 import uk.aylett.puzzles.engine.PointerAction
 import uk.aylett.puzzles.engine.PointerButton
@@ -126,6 +130,15 @@ class GameViewModel(
       }
     }
 
+    // This ViewModel outlives a trip to the Settings screen, and with it the session. Without
+    // pushing changes into the live session, the stale values it still holds would be written
+    // back by persist() on the next pause, silently undoing what Settings just changed.
+    viewModelScope.launch {
+      prefsStore.sharedSettings.collect { stored ->
+        session?.takeIf { !it.engineClosed }?.let { overlaySettings(it, stored) }
+      }
+    }
+
     viewModelScope.launch { openSession() }
 
     viewModelScope.launch {
@@ -169,6 +182,7 @@ class GameViewModel(
 
     val savedPrefs = prefsStore.loadPrefs(name)
     if (savedPrefs != null) session.loadPrefs(savedPrefs) else session.applyPrefDefaults()
+    overlaySettings(session, prefsStore.sharedSettings.first())
     // A restore only counts if it succeeded; a corrupt or stale save must still leave us able to
     // start a fresh game rather than sitting on an empty session forever.
     val restored = savedGameStore.load(name)?.let { session.deserialise(it) == null } == true
@@ -230,6 +244,19 @@ class GameViewModel(
           }
         }
       }
+  }
+
+  /**
+   * Makes [session]'s preferences agree with the app-wide settings. Skipped when nothing differs,
+   * so the echo of our own write (see [applyConfig]) costs no redraw.
+   */
+  private suspend fun overlaySettings(
+    session: PuzzleSession,
+    stored: Map<String, String>,
+  ) {
+    val fields = session.config(ConfigSection.PREFS).fields
+    val updated = fields.overlay(stored)
+    if (updated != fields) session.applyConfig(ConfigSection.PREFS, updated)
   }
 
   private fun act(block: suspend (PuzzleSession) -> Unit) {
@@ -342,7 +369,15 @@ class GameViewModel(
   suspend fun applyConfig(
     section: Int,
     fields: List<ConfigField>,
-  ): String? = session?.applyConfig(section, fields)
+  ): String? {
+    val error = session?.applyConfig(section, fields)
+    // Preferences are app-wide where games share them, so record the choice for every game rather
+    // than leaving it in this game's blob alone.
+    if (error == null && section == ConfigSection.PREFS) {
+      prefsStore.setSharedSettings(fields.toSettings())
+    }
+    return error
+  }
 
   suspend fun gameId(): String = session?.gameId() ?: ""
 
