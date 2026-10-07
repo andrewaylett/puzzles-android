@@ -26,6 +26,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import uk.aylett.puzzles.engine.render.BitmapDrawingSink
 import java.util.concurrent.atomic.AtomicLong
+import java.util.concurrent.atomic.AtomicReference
 
 private const val DOMINOSA = "Dominosa"
 private const val LOG_TAG = "PuzzleSession"
@@ -288,6 +289,19 @@ class PuzzleSession internal constructor(
       error
     }
 
+  // The newest drag the engine thread has not yet processed. A drag is a position report, not a
+  // command: if the engine falls behind (a slow redraw, a tick in front of us) the intermediate
+  // positions are worthless, and replaying them one redraw each is exactly what makes a dragged
+  // piece trail the finger by an ever-growing margin. So drags overwrite one another here, and the
+  // engine always acts on the latest position.
+  private val pendingDrag = AtomicReference<PointerEvent?>(null)
+
+  private data class PointerEvent(
+    val code: Int,
+    val x: Int,
+    val y: Int,
+  )
+
   /** @param x @param y physical pixels within the rendered bitmap, as the UI hands them to us. */
   suspend fun pointer(
     action: PointerAction,
@@ -295,15 +309,36 @@ class PuzzleSession internal constructor(
     x: Int,
     y: Int,
     stylus: Boolean = false,
-  ) = engineThread.run {
+  ) {
     // Floor, not truncate: a drag just off the top or left edge is negative, and rounding it
     // towards zero would report it as inside the first cell.
-    midend.processKey(
-      me,
-      Math.floorDiv(x, scale),
-      Math.floorDiv(y, scale),
-      buttonCode(action, button, stylus),
-    )
+    val event =
+      PointerEvent(
+        buttonCode(action, button, stylus),
+        Math.floorDiv(x, scale),
+        Math.floorDiv(y, scale),
+      )
+    if (action == PointerAction.DRAG) {
+      // Only the call that finds the slot empty queues a task; later drags just replace the
+      // contents and are picked up by the task already waiting.
+      if (pendingDrag.getAndSet(event) != null) return
+      engineThread.run {
+        pendingDrag.getAndSet(null)?.let { processPointer(it) }
+      }
+    } else {
+      // Taken now, on the caller's thread, rather than inside the task: a drag arriving after this
+      // event must not be hoisted ahead of it by the drag task still waiting in the queue. The
+      // taken drag is replayed first so the press/release still sees the position it follows.
+      val stale = pendingDrag.getAndSet(null)
+      engineThread.run {
+        stale?.let { processPointer(it) }
+        processPointer(event)
+      }
+    }
+  }
+
+  private fun processPointer(event: PointerEvent) {
+    midend.processKey(me, event.x, event.y, event.code)
     redrawAndSync()
   }
 

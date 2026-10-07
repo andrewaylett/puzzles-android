@@ -129,6 +129,17 @@ more coarsely, leaving up to `scale - 1` px unused per axis — which the centri
 `SurfacePresenter` absorbs. Puzzles are never scaled to fit and never exceed the viewport, so there is
 no zoom or pan gesture to support today.
 
+### Drag coalescing
+
+Pointer *drags* are position reports, not commands, so `PuzzleSession.pointer` keeps only the
+newest unprocessed one rather than queueing each onto the engine thread. Queueing them all meant
+that whenever a redraw or tick ran long, a backlog of stale positions built up and each was then
+replayed with its own redraw, so dragged pieces trailed the finger by a growing margin. Presses and
+releases are never dropped, and any pending drag is taken at call time and replayed in front of
+them, so a later drag cannot overtake a press that was queued first. Animation timing needs no
+equivalent: `tick()` measures a fresh delta from the clock each call and the pacing loop awaits
+each tick, so a missed frame just yields a larger delta rather than a queue.
+
 ### Animation pacing
 
 `PuzzleSession.tick()` calls `midend_timer` and redraws once; how often to call it while
