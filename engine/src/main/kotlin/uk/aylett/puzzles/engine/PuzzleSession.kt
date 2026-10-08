@@ -588,17 +588,20 @@ class PuzzleSession internal constructor(
   suspend fun deserialise(bytes: ByteArray): String? =
     engineThread.run {
       setBusy(true)
-      val error = midend.deserialise(me, bytes)
-      if (error == null) {
-        // A restored save *is* a game, so this is the other legitimate route to hasGame.
-        hasGame = true
-        applySize()
-        applyPalette()
-        midend.forceRedraw(me)
-        redrawAndSync()
+      try {
+        val error = midend.deserialise(me, bytes)
+        if (error == null) {
+          // A restored save *is* a game, so this is the other legitimate route to hasGame.
+          hasGame = true
+          applySize()
+          applyPalette()
+          midend.forceRedraw(me)
+          redrawAndSync()
+        }
+        error
+      } finally {
+        setBusy(false)
       }
-      setBusy(false)
-      error
     }
 
   suspend fun savePrefs(): ByteArray = engineThread.run { midend.savePrefs(me) }

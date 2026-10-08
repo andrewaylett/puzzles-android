@@ -65,7 +65,10 @@ class GenerationBenchmark {
             val leaves = session.presets().leaves()
             val preset = leaves.firstOrNull { it.title.contains(presetFragment) }
             if (preset == null) {
-              Log.w(TAG, "$name: no preset matching '$presetFragment' in ${leaves.map { it.title }}")
+              Log.w(
+                TAG,
+                "$name: no preset matching '$presetFragment' in ${leaves.map { it.title }}",
+              )
               return@use
             }
             // Seeds are fixed so every configuration generates the very same games; otherwise
@@ -73,7 +76,11 @@ class GenerationBenchmark {
             session.applyPreset(preset.id)
             // The plain game id leaves out parameters such as difficulty; the seed form keeps them all.
             val seedField =
-              session.config(ConfigSection.SEED).fields.filterIsInstance<ConfigField.Text>().first()
+              session
+                .config(ConfigSection.SEED)
+                .fields
+                .filterIsInstance<ConfigField.Text>()
+                .first()
             val params = seedField.value.substringBefore('#')
             val seeds = (1..runs).map { "$params#bench$it" }
             val passes =

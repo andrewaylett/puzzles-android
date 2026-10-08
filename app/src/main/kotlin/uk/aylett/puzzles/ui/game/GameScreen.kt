@@ -78,6 +78,7 @@ import uk.aylett.puzzles.engine.FILL_PENCIL_MARKS_BUTTON
 import uk.aylett.puzzles.engine.GameStatus
 import uk.aylett.puzzles.engine.PresetEntry
 import uk.aylett.puzzles.ui.game.dialogs.ConfigDialog
+import uk.aylett.puzzles.ui.game.dialogs.FailureDialog
 import uk.aylett.puzzles.ui.game.dialogs.GameIdDialog
 import uk.aylett.puzzles.ui.game.dialogs.PresetsDialog
 
@@ -369,10 +370,10 @@ fun GameScreen(
       )
     }
 
-    ActiveDialog.NONE -> {
-      Unit
-    }
+    ActiveDialog.NONE -> {}
   }
+
+  uiState.failure?.let { FailureDialog(it, onDismiss = viewModel::dismissFailure) }
 }
 
 @Composable

@@ -40,6 +40,13 @@ interface EngineProvider {
   val engineInvalidated: SharedFlow<Unit>
 
   suspend fun engine(): PuzzleEngine
+
+  /**
+   * Throws away [failed] after it broke (see [uk.aylett.puzzles.engine.EngineFailure]); the next
+   * [engine] call builds a new one. Unlike [engineInvalidated] this does not notify anyone: the
+   * caller is already replacing its own session and a notification would race with that.
+   */
+  suspend fun discardEngine(failed: PuzzleEngine)
 }
 
 /**
@@ -78,6 +85,23 @@ class PuzzlesApplication :
             .also { engineDeferred = it }
       }
     return deferred.await()
+  }
+
+  override suspend fun discardEngine(failed: PuzzleEngine) {
+    // Only if it is still the current one: another screen may already have replaced it, and a
+    // healthy engine is not ours to close.
+    val stale =
+      engineMutex.withLock {
+        val current = engineDeferred
+        if (current != null && current.isCompleted && current.await() === failed) {
+          engineDeferred = null
+          failed
+        } else {
+          null
+        }
+      }
+    runCatching { stale?.close() }
+      .onFailure { Log.w("PuzzlesApplication", "Discarding the failed engine failed", it) }
   }
 
   /**

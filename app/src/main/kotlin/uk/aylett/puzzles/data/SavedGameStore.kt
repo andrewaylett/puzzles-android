@@ -19,6 +19,8 @@ import android.content.Context
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.File
+import java.nio.file.Files
+import java.nio.file.StandardCopyOption
 
 /**
  * Persists one in-progress game per puzzle type to the app's private files directory, so leaving
@@ -51,7 +53,24 @@ class SavedGameStore(
     bytes: ByteArray,
   ) {
     withContext(Dispatchers.IO) {
-      file(gameName).writeBytes(bytes)
+      // Written beside and renamed into place, so being killed mid-write leaves the previous save
+      // rather than a truncated one that would then fail to restore.
+      val target = file(gameName)
+      val temp = File(target.parentFile, "${target.name}.tmp")
+      temp.writeBytes(bytes)
+      Files.move(
+        temp.toPath(),
+        target.toPath(),
+        StandardCopyOption.REPLACE_EXISTING,
+        StandardCopyOption.ATOMIC_MOVE,
+      )
     }
   }
+
+  /** Removes and returns the save, for when it has proved unrestorable. */
+  suspend fun take(gameName: String): ByteArray? =
+    withContext(Dispatchers.IO) {
+      val f = file(gameName)
+      if (f.exists()) f.readBytes().also { f.delete() } else null
+    }
 }

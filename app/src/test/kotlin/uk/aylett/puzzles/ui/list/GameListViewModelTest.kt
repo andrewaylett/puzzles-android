@@ -53,6 +53,8 @@ class GameListViewModelTest {
       override val engineInvalidated = MutableSharedFlow<Unit>()
 
       override suspend fun engine(): PuzzleEngine = engineReady.await()
+
+      override suspend fun discardEngine(failed: PuzzleEngine) = Unit
     }
 
   private val favourites = MutableStateFlow(emptySet<String>())

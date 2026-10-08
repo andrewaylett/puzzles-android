@@ -18,6 +18,7 @@
 package uk.aylett.puzzles.ui.game
 
 import android.app.Application
+import android.util.Log
 import android.view.Surface
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
@@ -42,17 +43,23 @@ import kotlinx.coroutines.sync.withLock
 import uk.aylett.puzzles.EngineProvider
 import uk.aylett.puzzles.PuzzlesApplication
 import uk.aylett.puzzles.data.AppPreferences
+import uk.aylett.puzzles.data.FailureReport
+import uk.aylett.puzzles.data.RecoveryStore
 import uk.aylett.puzzles.data.SavedGameStore
 import uk.aylett.puzzles.data.overlay
 import uk.aylett.puzzles.data.toSettings
 import uk.aylett.puzzles.engine.ConfigField
 import uk.aylett.puzzles.engine.ConfigForm
 import uk.aylett.puzzles.engine.ConfigSection
+import uk.aylett.puzzles.engine.EngineFailure
 import uk.aylett.puzzles.engine.GameStatus
 import uk.aylett.puzzles.engine.PointerAction
 import uk.aylett.puzzles.engine.PointerButton
 import uk.aylett.puzzles.engine.PresetEntry
+import uk.aylett.puzzles.engine.PuzzleEngine
 import uk.aylett.puzzles.engine.PuzzleSession
+import java.io.PrintWriter
+import java.io.StringWriter
 
 // How long a run of ticks must produce no visible change before the animation loop backs off from
 // vsync pacing to a slow poll — sized in time rather than frame count so it means the same thing
@@ -63,6 +70,8 @@ private const val ANIMATION_IDLE_THRESHOLD_MS = 100L
 // The slow-poll rate once backed off — fast enough to keep a ticking game clock (Mines, Inertia)
 // looking live, far below display refresh rate so it costs nothing while idle.
 private const val ANIMATION_BACKOFF_INTERVAL_MS = 200L
+
+private const val LOG_TAG = "GameViewModel"
 
 private data class PendingSize(
   val widthPx: Int,
@@ -80,11 +89,20 @@ class GameViewModel(
   private val gameIndex: Int,
   private val prefsStore: AppPreferences,
   private val savedGameStore: SavedGameStore,
+  private val recoveryStore: RecoveryStore,
 ) : ViewModel() {
   private val _state = MutableStateFlow(GameUiState())
   val state: StateFlow<GameUiState> = _state.asStateFlow()
 
   private var session: PuzzleSession? = null
+
+  // The engine `session` belongs to, kept so that it can be discarded if it breaks.
+  private var engine: PuzzleEngine? = null
+
+  // Set from restoring a save until the restored game has been drawn (or saved again) without
+  // incident. While it is set, the save is the prime suspect for any engine failure, and the
+  // matching marker on disk stands in for us if the process dies before we can say so.
+  private var unconfirmedRestore: String? = null
 
   // Set once the session opens and its GameInfo is known; persistence is keyed on the game's
   // name rather than gameIndex, which is just upstream's list ordering and could shift.
@@ -135,7 +153,9 @@ class GameViewModel(
     // back by persist() on the next pause, silently undoing what Settings just changed.
     viewModelScope.launch {
       prefsStore.sharedSettings.collect { stored ->
-        session?.takeIf { !it.engineClosed }?.let { overlaySettings(it, stored) }
+        session?.takeIf { !it.engineClosed }?.let { s ->
+          guarded(s, "applying settings", Unit) { overlaySettings(it, stored) }
+        }
       }
     }
 
@@ -168,24 +188,68 @@ class GameViewModel(
    * recycle the shared engine while this screen is backgrounded, and [onResume] calls this again
    * to replace a session whose engine thread no longer exists.
    */
-  private suspend fun openSession() =
+  private suspend fun openSession(restore: Boolean = true) =
     openMutex.withLock {
-      if (session == null) doOpenSession()
+      if (session == null) doOpenSession(restore, retriesLeft = 1)
     }
 
-  private suspend fun doOpenSession() {
+  /**
+   * @param restore whether to try the saved game; false after a save has been given up on.
+   * @param retriesLeft how many times an engine failure unrelated to the save may be retried on a
+   *   fresh engine before giving up and letting it propagate.
+   */
+  private suspend fun doOpenSession(
+    restore: Boolean,
+    retriesLeft: Int,
+  ) {
     val engine = engines.engine()
-    val session = engine.openGame(gameIndex)
-    this@GameViewModel.session = session
-    val name = session.game.name
+    this.engine = engine
+    val name = engine.games[gameIndex].name
     gameName = name
 
-    val savedPrefs = prefsStore.loadPrefs(name)
-    if (savedPrefs != null) session.loadPrefs(savedPrefs) else session.applyPrefDefaults()
-    overlaySettings(session, prefsStore.sharedSettings.first())
-    // A restore only counts if it succeeded; a corrupt or stale save must still leave us able to
-    // start a fresh game rather than sitting on an empty session forever.
-    val restored = savedGameStore.load(name)?.let { session.deserialise(it) == null } == true
+    // A marker still present means a previous restore never finished, and not by any failure we
+    // could catch. Trying it again would most likely die the same way, forever.
+    val abandoned = restore && recoveryStore.wasRestoring(name)
+    if (abandoned) {
+      recoveryStore.clearRestoring(name)
+      val report =
+        recoveryStore.record(
+          name,
+          "The app stopped while restoring this game.",
+          "A restore marker was left behind, so the previous attempt did not finish.",
+          savedGameStore.take(name),
+          startedFresh = true,
+        )
+      _state.value = _state.value.copy(failure = report)
+    }
+    val saved = if (restore && !abandoned) savedGameStore.load(name) else null
+
+    val session: PuzzleSession
+    var restored = false
+    var restoreAttempted = false
+    try {
+      session = engine.openGame(gameIndex)
+      this.session = session
+      val savedPrefs = prefsStore.loadPrefs(name)
+      if (savedPrefs != null) session.loadPrefs(savedPrefs) else session.applyPrefDefaults()
+      overlaySettings(session, prefsStore.sharedSettings.first())
+      // A restore only counts if it succeeded; a corrupt or stale save must still leave us able to
+      // start a fresh game rather than sitting on an empty session forever.
+      if (saved != null) {
+        restoreAttempted = true
+        recoveryStore.markRestoring(name)
+        restored = session.deserialise(saved) == null
+        if (!restored) recoveryStore.clearRestoring(name)
+      }
+    } catch (e: EngineFailure) {
+      // Whatever the engine was doing, it can no longer be trusted, and neither can the session
+      // half set up on it. Only the save is blamed if restoring it is what broke.
+      this.session = null
+      recover(engine, name, "opening the game", e, quarantine = restoreAttempted)
+      if (!restoreAttempted && retriesLeft <= 0) throw e
+      return doOpenSession(restore && !restoreAttempted, retriesLeft - 1)
+    }
+    unconfirmedRestore = name.takeIf { restored }
     // Coming back to a finished puzzle only shows a solved board with nothing left to do, so a won
     // game is treated as nothing to restore: leaving gameStarted false has the sizing collector
     // below generate a fresh one. Lost games stay, as the player may want to undo the mistake.
@@ -197,7 +261,7 @@ class GameViewModel(
       _state.value.copy(
         loading = false,
         game = session.game,
-        keyHints = session.keyHints(),
+        keyHints = guarded(session, "reading key hints", emptyList()) { it.keyHints() },
       )
 
     sessionJob =
@@ -211,7 +275,8 @@ class GameViewModel(
             // cheapest signal that any of that may have happened.
             if (frame.gameId != hintsForGameId && frame.gameId.isNotEmpty()) {
               hintsForGameId = frame.gameId
-              _state.value = _state.value.copy(keyHints = session.keyHints())
+              val hints = guarded(session, "reading key hints", null) { it.keyHints() }
+              if (hints != null) _state.value = _state.value.copy(keyHints = hints)
             }
           }
         }
@@ -232,14 +297,17 @@ class GameViewModel(
         // fresh (potentially multi-second) puzzle regeneration at that size.
         launch {
           pendingSize.filterNotNull().debounce(150).collectLatest { (w, h, density) ->
-            session.resize(w, h, density)
-            // A session deliberately opens without a game, so that a saved one can be restored
-            // without first paying to generate a throwaway. When there was nothing to restore,
-            // this is where the first game comes from — after the size is known, so it is
-            // generated at the size it will actually be played at.
-            if (!gameStarted) {
-              gameStarted = true
-              session.newGame()
+            guarded(session, "sizing the game", Unit) {
+              it.resize(w, h, density)
+              confirmRestore()
+              // A session deliberately opens without a game, so that a saved one can be restored
+              // without first paying to generate a throwaway. When there was nothing to restore,
+              // this is where the first game comes from — after the size is known, so it is
+              // generated at the size it will actually be played at.
+              if (!gameStarted) {
+                gameStarted = true
+                it.newGame()
+              }
             }
           }
         }
@@ -260,7 +328,99 @@ class GameViewModel(
   }
 
   private fun act(block: suspend (PuzzleSession) -> Unit) {
-    viewModelScope.launch { session?.let { block(it) } }
+    viewModelScope.launch { guarded("handling input", Unit, block) }
+  }
+
+  /** Runs [block] on the current session, if there is one; [fallback] if there is not or it fails. */
+  private suspend fun <T> guarded(
+    stage: String,
+    fallback: T,
+    block: suspend (PuzzleSession) -> T,
+  ): T = session?.let { guarded(it, stage, fallback, block) } ?: fallback
+
+  /**
+   * Runs [block] on [on], turning an [EngineFailure] into recovery instead of a crash. Every route
+   * into the engine from here goes through this: they run on scopes where an uncaught exception
+   * ends the process, and the player's game is not worth losing to a puzzle's bug.
+   */
+  private suspend fun <T> guarded(
+    on: PuzzleSession,
+    stage: String,
+    fallback: T,
+    block: suspend (PuzzleSession) -> T,
+  ): T =
+    try {
+      block(on)
+    } catch (e: EngineFailure) {
+      handleFailure(on, e, stage)
+      fallback
+    }
+
+  /** The restored game has survived being drawn, so the save is no longer under suspicion. */
+  private suspend fun confirmRestore() {
+    val name = unconfirmedRestore ?: return
+    unconfirmedRestore = null
+    recoveryStore.clearRestoring(name)
+  }
+
+  /**
+   * [failed] broke the engine after it was open. Discards it and starts again from the last save —
+   * or, if that save was still being restored, from nothing, since it is likely the cause.
+   * Idempotent: several callers can notice the same failure, and only the first finds [failed] still
+   * current.
+   */
+  private fun handleFailure(
+    failed: PuzzleSession,
+    e: EngineFailure,
+    stage: String,
+  ) {
+    if (session !== failed) return
+    dropSession()
+    val engine = engine
+    val name = gameName
+    val quarantine = unconfirmedRestore != null
+    unconfirmedRestore = null
+    viewModelScope.launch {
+      if (engine != null && name != null) recover(engine, name, stage, e, quarantine)
+      openSession(restore = !quarantine)
+    }
+  }
+
+  /**
+   * Discards the broken [engine] and records what happened.
+   *
+   * @param quarantine whether to set the saved game aside as well; it stays recorded in the report
+   *   rather than being deleted, as it is the only way to reproduce the failure.
+   */
+  private suspend fun recover(
+    engine: PuzzleEngine,
+    name: String,
+    stage: String,
+    e: EngineFailure,
+    quarantine: Boolean,
+  ) {
+    Log.e(LOG_TAG, "Engine failure while $stage", e)
+    engines.discardEngine(engine)
+    val save = if (quarantine) savedGameStore.take(name) else null
+    recoveryStore.clearRestoring(name)
+    val report =
+      recoveryStore.record(
+        name,
+        "The puzzle engine failed while $stage.",
+        describe(e),
+        save,
+        startedFresh = quarantine,
+      )
+    _state.value = _state.value.copy(failure = report)
+  }
+
+  private fun describe(e: EngineFailure): String {
+    val trace = StringWriter().also { e.cause.printStackTrace(PrintWriter(it)) }
+    return "$trace\nEngine stderr:\n${e.stderr}"
+  }
+
+  fun dismissFailure() {
+    _state.value = _state.value.copy(failure = null)
   }
 
   /**
@@ -279,7 +439,7 @@ class GameViewModel(
     viewModelScope.launch {
       var idleSinceNanos: Long? = null
       while (isActive) {
-        val changed = session.tick()
+        val changed = guarded(session, "animating", null) { it.tick() } ?: break
         val now = System.nanoTime()
         idleSinceNanos =
           when {
@@ -358,19 +518,21 @@ class GameViewModel(
     viewModelScope.launch { prefsStore.setStylusTaps(!_state.value.stylusTaps) }
   }
 
-  suspend fun presets(): List<PresetEntry> = session?.presets() ?: emptyList()
+  suspend fun presets(): List<PresetEntry> =
+    guarded("listing presets", emptyList()) { it.presets() }
 
-  suspend fun currentPresetId(): Int = session?.currentPresetId() ?: -1
+  suspend fun currentPresetId(): Int = guarded("reading the preset", -1) { it.currentPresetId() }
 
   fun applyPreset(id: Int) = act { it.applyPreset(id) }
 
-  suspend fun config(section: Int): ConfigForm? = session?.config(section)
+  suspend fun config(section: Int): ConfigForm? =
+    guarded("reading the configuration", null) { it.config(section) }
 
   suspend fun applyConfig(
     section: Int,
     fields: List<ConfigField>,
   ): String? {
-    val error = session?.applyConfig(section, fields)
+    val error = guarded("applying the configuration", null) { it.applyConfig(section, fields) }
     // Preferences are app-wide where games share them, so record the choice for every game rather
     // than leaving it in this game's blob alone.
     if (error == null && section == ConfigSection.PREFS) {
@@ -379,13 +541,17 @@ class GameViewModel(
     return error
   }
 
-  suspend fun gameId(): String = session?.gameId() ?: ""
+  suspend fun gameId(): String = guarded("reading the game id", "") { it.gameId() }
 
-  suspend fun setGameId(id: String): String? = session?.setGameId(id)
+  suspend fun setGameId(id: String): String? =
+    guarded("setting the game id", null) {
+      it.setGameId(id)
+    }
 
-  suspend fun exportBytes(): ByteArray? = session?.serialise()
+  suspend fun exportBytes(): ByteArray? = guarded("saving to a file", null) { it.serialise() }
 
-  suspend fun importBytes(bytes: ByteArray): String? = session?.deserialise(bytes)
+  suspend fun importBytes(bytes: ByteArray): String? =
+    guarded("loading from a file", null) { it.deserialise(bytes) }
 
   fun onPause() {
     session?.setPaused(true)
@@ -411,9 +577,12 @@ class GameViewModel(
     viewModelScope.launch {
       // One engine task, not two: see PuzzleSession.saveState for the race with the engine
       // being closed once the UI is hidden.
-      val state = session.saveState()
+      val state = guarded(session, "saving", null) { it.saveState() } ?: return@launch
       savedGameStore.save(name, state.game)
       prefsStore.savePrefs(name, state.prefs)
+      // Serialising a restored game proves it is sound enough to keep, which matters if the player
+      // leaves before the first layout would have confirmed it.
+      confirmRestore()
     }
   }
 
@@ -437,6 +606,7 @@ class GameViewModel(
             gameIndex,
             AppPreferences(application),
             SavedGameStore(application),
+            RecoveryStore(application),
           ) as T
         }
       }

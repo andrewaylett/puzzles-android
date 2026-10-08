@@ -325,6 +325,30 @@ value always wins over it.
 - "Taps cycle all states" is only offered in a puzzle that sets `STYLUS_SUPPORT`
   (`GameInfo.supportsStylus`, an allowlist for the same reason as `canFillPencilMarks`).
 
+## Engine failures
+
+**A trap is an exception, not an error return, and it condemns the whole engine.** A failed
+`assert` in the C ends as a `TrapException` thrown out of Chicory; left alone it kills the process
+from whichever coroutine was calling. Worse, if the failure was in restoring a save, the app
+reopens the last-played game on launch and restores it again — an unrecoverable crash loop that
+only clearing storage ended. So:
+
+- `EngineThread.run` is the one choke point and wraps anything thrown as `EngineFailure`, carrying
+  the tail of the module's stderr (the assertion text; the trap itself says nothing).
+- After a failure the instance's heap and the mid-end that trapped are suspect, so the engine is
+  discarded (`EngineProvider.discardEngine`) and a new session opened on a fresh one. Retrying on
+  the same engine is not safe. This deliberately does *not* go through `engineInvalidated`, which
+  would race the replacement session being opened.
+- Every route from `GameViewModel` into the engine is wrapped in `guarded`. On failure the game
+  reloads from its last save — unless a restore was still unconfirmed, in which case the save is
+  blamed, moved aside (never deleted: it is the only reproduction) and a fresh game generated.
+  `RecoveryStore` keeps a few reports and quarantined saves, and the player is offered the report
+  to share. There is no network reporting; the app has no network access.
+- A restore marker is written before restoring and cleared once the restored game has been laid out
+  or saved. If it is still there at launch, the last attempt died in a way no handler could catch
+  (out of memory, process killed), and the save is quarantined without being tried.
+- Failures that are not an `EngineFailure` (a bug in our Kotlin) are deliberately not swallowed.
+
 ## Engine lifecycle
 
 The shared `PuzzleEngine` (WASM instance plus its dedicated thread) is discarded and lazily rebuilt

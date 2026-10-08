@@ -40,6 +40,7 @@ class PuzzleEngine private constructor(
     suspend fun create(context: Context): PuzzleEngine {
       val engineThread = EngineThread()
       val hooks = EngineHooks()
+      engineThread.diagnostics = hooks::recentStderr
       val midend =
         engineThread.run {
           val module = PuzzlesModule.load()

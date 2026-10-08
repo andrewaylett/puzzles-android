@@ -43,6 +43,25 @@ class EngineHooks {
   var onActivateTimer: (() -> Unit)? = null
   var onDeactivateTimer: (() -> Unit)? = null
   var onIdsChanged: (() -> Unit)? = null
+
+  private val stderrTail = ArrayDeque<String>()
+
+  /**
+   * Remembers the last few lines the module wrote to stderr. An `assert` in the C surfaces in
+   * Kotlin only as "Trapped on unreachable instruction"; the assertion text, which names the
+   * failed condition and line, goes to stderr just before it, so a failure report needs it.
+   */
+  fun recordStderr(line: String) =
+    synchronized(stderrTail) {
+      stderrTail.addLast(line)
+      if (stderrTail.size > STDERR_TAIL_LINES) stderrTail.removeFirst()
+    }
+
+  fun recentStderr(): String = synchronized(stderrTail) { stderrTail.joinToString("\n") }
+
+  private companion object {
+    const val STDERR_TAIL_LINES = 20
+  }
 }
 
 /**
@@ -276,7 +295,12 @@ class WasmImports(
     memory.writeI32(nwrittenPtr, total)
     if (text.isNotEmpty()) {
       val message = text.toString().trimEnd('\n')
-      if (fd == 2) Log.w(LOG_TAG, message) else Log.i(LOG_TAG, message)
+      if (fd == 2) {
+        Log.w(LOG_TAG, message)
+        hooks.recordStderr(message)
+      } else {
+        Log.i(LOG_TAG, message)
+      }
     }
     return longArrayOf(0)
   }

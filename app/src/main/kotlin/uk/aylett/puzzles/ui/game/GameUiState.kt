@@ -15,6 +15,7 @@
  */
 package uk.aylett.puzzles.ui.game
 
+import uk.aylett.puzzles.data.FailureReport
 import uk.aylett.puzzles.engine.GameInfo
 import uk.aylett.puzzles.engine.KeyHint
 import uk.aylett.puzzles.engine.PuzzleFrame
@@ -26,6 +27,7 @@ data class GameUiState(
   val frame: PuzzleFrame = PuzzleFrame(),
   val keyHints: List<KeyHint> = emptyList(),
   val toastMessage: String? = null,
+  val failure: FailureReport? = null,
   val swapPressGesture: Boolean = false,
   val stylusTaps: Boolean = true,
 )

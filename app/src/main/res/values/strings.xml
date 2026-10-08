@@ -60,4 +60,8 @@
   <string name="about_licences_title">Licences</string>
   <string name="about_upstream_link">Visit the original collection</string>
   <string name="loading">Loading&#8230;</string>
+  <string name="failure_title">%1$s hit a problem</string>
+  <string name="failure_started_fresh">Your saved game could not be restored, so a new one was started. The old one has been kept with the report, which you can share to help fix this.</string>
+  <string name="failure_reloaded">The puzzle engine failed and was restarted. Your game was reloaded from where it was last saved, which may be a little behind. You can share a report to help fix this.</string>
+  <string name="failure_share">Share report</string>
 </resources>

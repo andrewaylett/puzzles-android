@@ -40,11 +40,14 @@ import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 import uk.aylett.puzzles.EngineProvider
 import uk.aylett.puzzles.data.AppPreferences
+import uk.aylett.puzzles.data.FailureReport
+import uk.aylett.puzzles.data.RecoveryStore
 import uk.aylett.puzzles.data.SavedGameStore
 import uk.aylett.puzzles.data.settingId
 import uk.aylett.puzzles.engine.ConfigField
 import uk.aylett.puzzles.engine.ConfigForm
 import uk.aylett.puzzles.engine.ConfigSection
+import uk.aylett.puzzles.engine.EngineFailure
 import uk.aylett.puzzles.engine.GameInfo
 import uk.aylett.puzzles.engine.GameStatus
 import uk.aylett.puzzles.engine.KeyHint
@@ -65,6 +68,10 @@ class GameViewModelTest {
   private val engineReady = CompletableDeferred<PuzzleEngine>()
   private val engine = mockk<PuzzleEngine>()
   private val openedSessions = mutableListOf<PuzzleSession>()
+  private val discarded = mutableListOf<PuzzleEngine>()
+
+  // Consumed by the next session's deserialise, to make a restore fail the way a trap does.
+  private var deserialiseFailure: Throwable? = null
 
   // What every mock session reports for engineClosed; flipped to simulate the engine being
   // recycled without the invalidation notification having arrived yet.
@@ -75,6 +82,10 @@ class GameViewModelTest {
       override val engineInvalidated = invalidated
 
       override suspend fun engine(): PuzzleEngine = engineReady.await()
+
+      override suspend fun discardEngine(failed: PuzzleEngine) {
+        discarded += failed
+      }
     }
 
   private val swapSetting = MutableStateFlow(false)
@@ -97,9 +108,25 @@ class GameViewModelTest {
       coEvery { save(any(), any()) } returns Unit
     }
 
+  private val recovery =
+    mockk<RecoveryStore>(relaxUnitFun = true) {
+      coEvery { wasRestoring(any()) } returns false
+      coEvery { record(any(), any(), any(), any(), any(), any()) } answers
+        {
+          FailureReport(
+            firstArg(),
+            secondArg(),
+            thirdArg(),
+            savedGameKept = false,
+            startedFresh = true,
+          )
+        }
+    }
+
   @BeforeEach
   fun setUp() {
     Dispatchers.setMain(dispatcher)
+    every { engine.games } returns listOf(GameInfo(0, "Test", false, false, false))
     coEvery { engine.openGame(any()) } coAnswers
       {
         mockk<PuzzleSession>(relaxUnitFun = true) {
@@ -110,6 +137,14 @@ class GameViewModelTest {
           coEvery { keyHints() } returns emptyList()
           coEvery { config(any()) } returns ConfigForm("Preferences", emptyList())
           coEvery { saveState() } returns PuzzleSession.SavedState(byteArrayOf(), byteArrayOf())
+          coEvery { deserialise(any()) } coAnswers
+            {
+              deserialiseFailure?.let {
+                deserialiseFailure = null
+                throw it
+              }
+              null
+            }
         }.also { openedSessions += it }
       }
   }
@@ -119,7 +154,7 @@ class GameViewModelTest {
     Dispatchers.resetMain()
   }
 
-  private fun viewModel() = GameViewModel(engines, 0, prefs, saves)
+  private fun viewModel() = GameViewModel(engines, 0, prefs, saves, recovery)
 
   @Test
   fun `onResume while the first open is still waiting for the engine opens only one session`() =
@@ -178,6 +213,59 @@ class GameViewModelTest {
       verify(exactly = 0) { openedSessions.first().close() }
       verify(exactly = 0) { openedSessions.first().setPaused(false) }
       verify(exactly = 1) { openedSessions.last().setPaused(false) }
+    }
+
+  @Test
+  fun `a save that breaks the engine is quarantined and replaced by a fresh game`() =
+    runTest(dispatcher) {
+      engineReady.complete(engine)
+      coEvery { saves.load("Test") } returns byteArrayOf(1, 2, 3)
+      coEvery { saves.take("Test") } returns byteArrayOf(1, 2, 3)
+      deserialiseFailure = EngineFailure(IllegalStateException("unreachable"), "Assertion failed")
+
+      val vm = viewModel()
+      advanceUntilIdle()
+
+      assertEquals(listOf(engine), discarded)
+      coVerify { saves.take("Test") }
+      coVerify { recovery.record("Test", any(), any(), byteArrayOf(1, 2, 3), true, any()) }
+      assertTrue(vm.state.value.failure != null)
+      // The replacement session did not try the save again.
+      assertEquals(2, openedSessions.size)
+      coVerify(exactly = 0) { openedSessions.last().deserialise(any()) }
+      assertFalse(vm.state.value.loading)
+    }
+
+  @Test
+  fun `a restore marker left by an earlier run quarantines the save without restoring it`() =
+    runTest(dispatcher) {
+      engineReady.complete(engine)
+      coEvery { recovery.wasRestoring("Test") } returns true
+      coEvery { saves.take("Test") } returns byteArrayOf(9)
+
+      val vm = viewModel()
+      advanceUntilIdle()
+
+      coVerify { saves.take("Test") }
+      coVerify(exactly = 0) { saves.load(any()) }
+      coVerify(exactly = 0) { openedSessions.single().deserialise(any()) }
+      assertTrue(vm.state.value.failure != null)
+    }
+
+  @Test
+  fun `a restore is marked while in flight and unmarked once saved`() =
+    runTest(dispatcher) {
+      engineReady.complete(engine)
+      coEvery { saves.load("Test") } returns byteArrayOf(1)
+
+      val vm = viewModel()
+      advanceUntilIdle()
+      coVerify { recovery.markRestoring("Test") }
+      coVerify(exactly = 0) { recovery.clearRestoring("Test") }
+
+      vm.onPause()
+      advanceUntilIdle()
+      coVerify { recovery.clearRestoring("Test") }
     }
 
   @Test

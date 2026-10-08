@@ -29,6 +29,12 @@ android {
     compose = true
   }
 
+  testOptions {
+    // So that logging from code under test (failure recovery logs what it recovered from) does
+    // not throw "not mocked" from the android.jar stubs.
+    unitTests.isReturnDefaultValues = true
+  }
+
   compileOptions {
     sourceCompatibility = JavaVersion.VERSION_17
     targetCompatibility = JavaVersion.VERSION_17
