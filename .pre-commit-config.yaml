@@ -32,6 +32,8 @@ repos:
   rev: 3.11.1
   hooks:
   - id: editorconfig-checker
+    exclude_types:
+    - kotlin
 
 - repo: https://github.com/rhysd/actionlint
   rev: v1.7.12

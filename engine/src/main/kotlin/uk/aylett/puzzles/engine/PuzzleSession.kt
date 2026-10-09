@@ -18,6 +18,7 @@ package uk.aylett.puzzles.engine
 import android.graphics.Bitmap
 import android.util.Log
 import android.view.Surface
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -757,17 +758,28 @@ class PuzzleSession internal constructor(
    * Frees the mid-end handle and detaches from [hooks]. Blocks the calling thread briefly, hopping
    * onto the engine thread to do it: [AutoCloseable.close] has no suspend variant, and a `midend *`
    * must only ever be freed from the thread that owns the instance.
+   *
+   * Does nothing further if the engine has already been closed, which is routine rather than
+   * exceptional: the shared engine is recycled when the UI is hidden, so by the time the owner is
+   * destroyed there may be no thread left to hop onto, and the instance is garbage along with its
+   * mid-end. Hopping anyway would throw from `onDestroy` and take the process down.
    */
   override fun close() {
     _animating.value = false
     detachSurface()
-    runBlocking(engineThread.dispatcher) {
-      hasGame = false
-      if (hooks.drawingSink === sink) hooks.drawingSink = null
-      hooks.onActivateTimer = null
-      hooks.onDeactivateTimer = null
-      hooks.onIdsChanged = null
-      midend.midendFree(me)
+    if (engineThread.isClosed) return
+    try {
+      runBlocking(engineThread.dispatcher) {
+        hasGame = false
+        if (hooks.drawingSink === sink) hooks.drawingSink = null
+        hooks.onActivateTimer = null
+        hooks.onDeactivateTimer = null
+        hooks.onIdsChanged = null
+        midend.midendFree(me)
+      }
+    } catch (e: CancellationException) {
+      // The engine was closed between the check above and the hop; same outcome, just a lost race.
+      Log.w(LOG_TAG, "Engine closed while closing the session; nothing left to free", e)
     }
   }
 }

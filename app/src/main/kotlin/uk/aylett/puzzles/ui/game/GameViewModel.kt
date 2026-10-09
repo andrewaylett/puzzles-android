@@ -24,6 +24,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.CreationExtras
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.android.awaitFrame
@@ -238,8 +239,19 @@ class GameViewModel(
       if (saved != null) {
         restoreAttempted = true
         recoveryStore.markRestoring(name)
-        restored = session.deserialise(saved) == null
-        if (!restored) recoveryStore.clearRestoring(name)
+        val error = session.deserialise(saved)
+        restored = error == null
+        if (restored) {
+          Log.i(LOG_TAG, "Restored $name from ${saved.size} bytes")
+        } else {
+          Log.w(LOG_TAG, "Could not restore $name from ${saved.size} bytes: $error")
+          recoveryStore.clearRestoring(name)
+        }
+      } else {
+        Log.i(
+          LOG_TAG,
+          "No saved game to restore for $name (restore=$restore, abandoned=$abandoned)",
+        )
       }
     } catch (e: EngineFailure) {
       // Whatever the engine was doing, it can no longer be trusted, and neither can the session
@@ -572,14 +584,31 @@ class GameViewModel(
   }
 
   private fun persist() {
-    val session = session ?: return
-    val name = gameName ?: return
+    val session = session
+    val name = gameName
+    if (session == null || name == null) {
+      Log.w(LOG_TAG, "Not saving: no open session (session=$session, game=$name)")
+      return
+    }
     viewModelScope.launch {
       // One engine task, not two: see PuzzleSession.saveState for the race with the engine
       // being closed once the UI is hidden.
-      val state = guarded(session, "saving", null) { it.saveState() } ?: return@launch
+      val state =
+        try {
+          guarded(session, "saving", null) { it.saveState() }
+        } catch (e: CancellationException) {
+          // A closed engine cancels the task rather than failing it, and inside a launch that is
+          // otherwise silent: the moves since the last save would simply vanish with no trace.
+          Log.w(LOG_TAG, "Save of $name was cancelled; moves since the last save are lost", e)
+          throw e
+        }
+      if (state == null) {
+        Log.w(LOG_TAG, "Save of $name failed in the engine; keeping the previous save")
+        return@launch
+      }
       savedGameStore.save(name, state.game)
       prefsStore.savePrefs(name, state.prefs)
+      Log.i(LOG_TAG, "Saved $name (${state.game.size} bytes)")
       // Serialising a restored game proves it is sound enough to keep, which matters if the player
       // leaves before the first layout would have confirmed it.
       confirmRestore()
