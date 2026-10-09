@@ -18,6 +18,7 @@
 package uk.aylett.puzzles.ui.game
 
 import android.app.Application
+import android.os.SystemClock
 import android.util.Log
 import android.view.Surface
 import androidx.lifecycle.ViewModel
@@ -215,10 +216,19 @@ class GameViewModel(
     restore: Boolean,
     retriesLeft: Int,
   ) {
+    val startedAt = SystemClock.elapsedRealtime()
+
+    // Timing for each stage of opening: a lost save once turned out to hinge on what a session
+    // looked like part way through this, and logcat showed nothing between launch and the first
+    // pause.
+    fun stage(what: String) =
+      Log.i(LOG_TAG, "Open #$gameIndex: $what at +${SystemClock.elapsedRealtime() - startedAt}ms")
+    stage("starting (restore=$restore, retriesLeft=$retriesLeft)")
     val engine = engines.engine()
     this.engine = engine
     val name = engine.games[gameIndex].name
     gameName = name
+    stage("engine ready for $name")
 
     // A marker still present means a previous restore never finished, and not by any failure we
     // could catch. Trying it again would most likely die the same way, forever.
@@ -243,6 +253,7 @@ class GameViewModel(
     try {
       session = engine.openGame(gameIndex)
       this.session = session
+      stage("session published, game not yet restored")
       val savedPrefs = prefsStore.loadPrefs(name)
       if (savedPrefs != null) session.loadPrefs(savedPrefs) else session.applyPrefDefaults()
       overlaySettings(session, prefsStore.sharedSettings.first())
@@ -273,6 +284,7 @@ class GameViewModel(
       if (!restoreAttempted && retriesLeft <= 0) throw e
       return doOpenSession(restore && !restoreAttempted, retriesLeft - 1)
     }
+    stage("restore settled (restored=$restored)")
     unconfirmedRestore = name.takeIf { restored }
     // Coming back to a finished puzzle only shows a solved board with nothing left to do, so a won
     // game is treated as nothing to restore: leaving gameStarted false has the sizing collector
@@ -288,6 +300,7 @@ class GameViewModel(
         keyHints = guarded(session, "reading key hints", emptyList()) { it.keyHints() },
       )
 
+    stage("open complete")
     sessionJob =
       viewModelScope.launch {
         launch {
@@ -607,6 +620,8 @@ class GameViewModel(
       Log.w(LOG_TAG, "Not saving: no open session (session=$session, game=$name)")
       return null
     }
+    // An empty game id means the session has no game yet, so this would be saving nothing.
+    Log.i(LOG_TAG, "Saving $name (frame gameId='${session.frames.value.gameId}')")
     return viewModelScope.launch {
       // One engine task, not two: see PuzzleSession.saveState for the race with the engine
       // being closed once the UI is hidden.
