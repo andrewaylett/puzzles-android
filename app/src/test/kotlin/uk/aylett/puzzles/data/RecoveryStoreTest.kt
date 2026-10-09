@@ -32,7 +32,7 @@ class RecoveryStoreTest {
   private fun store(): RecoveryStore {
     val context = mockk<Context>()
     every { context.filesDir } returns dir
-    return RecoveryStore(context)
+    return RecoveryStore(context, readLog = { "LOGLINE" })
   }
 
   private fun files(extension: String) =
@@ -58,6 +58,14 @@ class RecoveryStoreTest {
       assertTrue(report.text.contains("SAVEFILE:x"))
       assertTrue(report.savedGameKept)
       assertEquals(1, files(".sav").size)
+    }
+
+  @Test
+  fun `a report includes log output and is also written as a file with the same text`() =
+    runTest {
+      val report = store().record("Solo", "broke", "trace", null, false)
+      assertTrue(report.text.contains("LOGLINE"))
+      assertEquals(report.text, report.file?.readText())
     }
 
   @Test

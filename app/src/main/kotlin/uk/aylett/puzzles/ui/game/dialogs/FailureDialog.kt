@@ -15,6 +15,7 @@
  */
 package uk.aylett.puzzles.ui.game.dialogs
 
+import android.content.Context
 import android.content.Intent
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Text
@@ -22,8 +23,10 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
+import androidx.core.content.FileProvider
 import uk.aylett.puzzles.R
 import uk.aylett.puzzles.data.FailureReport
+import java.io.File
 
 /**
  * Tells the player that the engine failed and what was done about it, and offers to send the
@@ -52,7 +55,15 @@ fun FailureDialog(
           Intent(Intent.ACTION_SEND).apply {
             type = "text/plain"
             putExtra(Intent.EXTRA_SUBJECT, report.summary)
-            putExtra(Intent.EXTRA_TEXT, report.text)
+            val file = report.file
+            if (file != null) {
+              // A file, not EXTRA_TEXT: the report is long, and share targets such as Tailscale
+              // only take files. The provider grants the receiver read access to this one file.
+              putExtra(Intent.EXTRA_STREAM, reportUri(context, file))
+              addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            } else {
+              putExtra(Intent.EXTRA_TEXT, report.text)
+            }
           }
         context.startActivity(Intent.createChooser(send, null))
         onDismiss()
@@ -63,3 +74,8 @@ fun FailureDialog(
     },
   )
 }
+
+private fun reportUri(
+  context: Context,
+  file: File,
+) = FileProvider.getUriForFile(context, "${context.packageName}.reports", file)

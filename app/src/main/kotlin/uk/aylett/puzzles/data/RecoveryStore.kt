@@ -16,15 +16,19 @@
 package uk.aylett.puzzles.data
 
 import android.content.Context
+import android.os.Process
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.File
+import java.io.IOException
 
 /**
  * What the player is told, and can send on, after something went wrong with a game.
  *
- * [text] is complete and self-contained (including the unrestorable save, when there was one) so
- * that it can be pasted into a bug report without any other file.
+ * [text] is complete and self-contained (including the app's recent log output and the
+ * unrestorable save, when there was one) so that it can be read without any other file. [file]
+ * holds the same text on disk, because many share targets accept a file but not a long piece of
+ * text.
  */
 data class FailureReport(
   val gameName: String,
@@ -32,6 +36,7 @@ data class FailureReport(
   val text: String,
   val savedGameKept: Boolean,
   val startedFresh: Boolean,
+  val file: File? = null,
 )
 
 /**
@@ -47,6 +52,7 @@ data class FailureReport(
  */
 class RecoveryStore(
   private val context: Context,
+  private val readLog: () -> String = ::readOwnLog,
 ) {
   private val dir: File
     get() = File(context.filesDir, "recovery").also { it.mkdirs() }
@@ -88,6 +94,9 @@ class RecoveryStore(
           appendLine("Summary: $summary")
           appendLine()
           appendLine(detail.trim())
+          appendLine()
+          appendLine("Log output:")
+          appendLine(readLog().trim())
           if (save != null) {
             appendLine()
             appendLine("Saved game (${save.size} bytes):")
@@ -95,7 +104,7 @@ class RecoveryStore(
           }
         }
       val stem = "$nowMillis-${sanitise(gameName)}"
-      File(dir, "$stem.txt").writeText(text)
+      val file = File(dir, "$stem.txt").also { it.writeText(text) }
       if (save != null) File(dir, "$stem.sav").writeBytes(save)
       prune()
       FailureReport(
@@ -104,6 +113,7 @@ class RecoveryStore(
         text,
         savedGameKept = save != null,
         startedFresh = startedFresh,
+        file = file,
       )
     }
 
@@ -121,3 +131,31 @@ class RecoveryStore(
     const val MAX_EMBEDDED_SAVE = 64 * 1024
   }
 }
+
+/**
+ * The tail of this process's own logcat. An app may always read its own log without a permission,
+ * which is what keeps the "no permissions" rule intact. It is the log of *this* process only: a
+ * report written after a previous run died (the restore marker) has none of that run's output.
+ */
+private fun readOwnLog(): String =
+  try {
+    val process =
+      ProcessBuilder(
+        "logcat",
+        "-d",
+        "-t",
+        LOG_LINES.toString(),
+        "-v",
+        "threadtime",
+        "--pid=${Process.myPid()}",
+      ).redirectErrorStream(true)
+        .start()
+    process.inputStream
+      .bufferedReader()
+      .use { it.readText() }
+      .also { process.waitFor() }
+  } catch (e: IOException) {
+    "(log unavailable: $e)"
+  }
+
+private const val LOG_LINES = 500

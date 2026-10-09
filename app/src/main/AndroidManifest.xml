@@ -18,6 +18,8 @@
 <!--
   No <uses-permission> entries: everything the engine does is in-process, and file
   import/export uses the Storage Access Framework, which needs none. Keep it that way.
+  Failure reports are shared through a FileProvider, which grants one file per share and
+  needs no permission either.
 -->
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
@@ -42,5 +44,15 @@
         <category android:name="android.intent.category.LAUNCHER" />
       </intent-filter>
     </activity>
+
+    <provider
+      android:name="androidx.core.content.FileProvider"
+      android:authorities="${applicationId}.reports"
+      android:exported="false"
+      android:grantUriPermissions="true">
+      <meta-data
+        android:name="android.support.FILE_PROVIDER_PATHS"
+        android:resource="@xml/report_paths" />
+    </provider>
   </application>
 </manifest>
