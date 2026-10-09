@@ -55,6 +55,8 @@ class GameListViewModelTest {
       override suspend fun engine(): PuzzleEngine = engineReady.await()
 
       override suspend fun discardEngine(failed: PuzzleEngine) = Unit
+
+      override fun registerUnloadSaver(saver: suspend () -> Unit) = AutoCloseable {}
     }
 
   private val favourites = MutableStateFlow(emptySet<String>())

@@ -25,6 +25,7 @@ import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.CreationExtras
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.android.awaitFrame
@@ -41,6 +42,7 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
 import uk.aylett.puzzles.EngineProvider
 import uk.aylett.puzzles.PuzzlesApplication
 import uk.aylett.puzzles.data.AppPreferences
@@ -135,6 +137,16 @@ class GameViewModel(
   // animation and sizing collectors are never cancelled — two sessions then fight over the one
   // displayed frame, which shows as constant flashing.
   private val openMutex = Mutex()
+
+  // Saving in onPause is not enough on its own: play can continue after the last pause (a share
+  // sheet or the recents screen pauses us, and coming back resumes without pausing again before
+  // the process is trimmed), and the engine is about to go with whatever it holds. The engine
+  // owner waits for this, with the engine still open, before closing it.
+  private val unloadSaver =
+    engines.registerUnloadSaver {
+      // persist() reads state owned by the main thread; the engine owner calls from elsewhere.
+      withContext(Dispatchers.Main.immediate) { persist() }?.join()
+    }
 
   init {
     viewModelScope.launch {
@@ -583,14 +595,19 @@ class GameViewModel(
     }
   }
 
-  private fun persist() {
+  /**
+   * Saves the current game and prefs. The session and name are captured now, not when the launched
+   * save runs, so a later [dropSession] cannot turn it into a save of nothing. The job is returned
+   * for the caller that must wait for the save to land, namely the engine unload.
+   */
+  private fun persist(): Job? {
     val session = session
     val name = gameName
     if (session == null || name == null) {
       Log.w(LOG_TAG, "Not saving: no open session (session=$session, game=$name)")
-      return
+      return null
     }
-    viewModelScope.launch {
+    return viewModelScope.launch {
       // One engine task, not two: see PuzzleSession.saveState for the race with the engine
       // being closed once the UI is hidden.
       val state =
@@ -616,6 +633,7 @@ class GameViewModel(
   }
 
   override fun onCleared() {
+    unloadSaver.close()
     session?.close()
   }
 

@@ -69,6 +69,7 @@ class GameViewModelTest {
   private val engine = mockk<PuzzleEngine>()
   private val openedSessions = mutableListOf<PuzzleSession>()
   private val discarded = mutableListOf<PuzzleEngine>()
+  private val unloadSavers = mutableListOf<suspend () -> Unit>()
 
   // Consumed by the next session's deserialise, to make a restore fail the way a trap does.
   private var deserialiseFailure: Throwable? = null
@@ -85,6 +86,11 @@ class GameViewModelTest {
 
       override suspend fun discardEngine(failed: PuzzleEngine) {
         discarded += failed
+      }
+
+      override fun registerUnloadSaver(saver: suspend () -> Unit): AutoCloseable {
+        unloadSavers += saver
+        return AutoCloseable { unloadSavers -= saver }
       }
     }
 
@@ -284,6 +290,27 @@ class GameViewModelTest {
       coVerify(exactly = 0) { session.savePrefs() }
       coVerify { saves.save("Test", any()) }
       coVerify { prefs.savePrefs("Test", any()) }
+    }
+
+  @Test
+  fun `unloading the engine saves the game first, and not once the screen is gone`() =
+    runTest(dispatcher) {
+      engineReady.complete(engine)
+      val vm = viewModel()
+      advanceUntilIdle()
+
+      unloadSavers.single()()
+      advanceUntilIdle()
+
+      val session = openedSessions.single()
+      coVerify(exactly = 1) { session.saveState() }
+      coVerify { saves.save("Test", any()) }
+
+      vm.javaClass
+        .getDeclaredMethod("onCleared")
+        .apply { isAccessible = true }
+        .invoke(vm)
+      assertTrue(unloadSavers.isEmpty())
     }
 
   @Test

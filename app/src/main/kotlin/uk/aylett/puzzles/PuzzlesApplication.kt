@@ -30,6 +30,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import uk.aylett.puzzles.engine.PuzzleEngine
+import java.util.concurrent.CopyOnWriteArraySet
 
 /**
  * What a ViewModel needs from the process-wide engine owner. An interface so that ViewModels can
@@ -40,6 +41,14 @@ interface EngineProvider {
   val engineInvalidated: SharedFlow<Unit>
 
   suspend fun engine(): PuzzleEngine
+
+  /**
+   * Registers [saver] to be run, and awaited, whenever the engine is about to be unloaded because
+   * the app is no longer visible, while it is still open. Whatever a screen has not yet saved is
+   * lost with the engine, so this is the last chance to write it down. Close the result to
+   * unregister.
+   */
+  fun registerUnloadSaver(saver: suspend () -> Unit): AutoCloseable
 
   /**
    * Throws away [failed] after it broke (see [uk.aylett.puzzles.engine.EngineFailure]); the next
@@ -71,6 +80,13 @@ class PuzzlesApplication :
   // actually needs the engine again (GameViewModel.onResume), not eagerly here.
   private val _engineInvalidated = MutableSharedFlow<Unit>(extraBufferCapacity = 1)
   override val engineInvalidated: SharedFlow<Unit> = _engineInvalidated.asSharedFlow()
+
+  private val unloadSavers = CopyOnWriteArraySet<suspend () -> Unit>()
+
+  override fun registerUnloadSaver(saver: suspend () -> Unit): AutoCloseable {
+    unloadSavers += saver
+    return AutoCloseable { unloadSavers -= saver }
+  }
 
   /**
    * Returns the process's [PuzzleEngine], creating it lazily on first use or after
@@ -109,8 +125,8 @@ class PuzzlesApplication :
    *
    * [ComponentCallbacks2.TRIM_MEMORY_UI_HIDDEN] only fires once every activity has stopped, and
    * every [uk.aylett.puzzles.ui.game.GameViewModel] persists its session's state in `onPause`,
-   * which always runs before that — so by the time this fires there is nothing left to save, and
-   * the engine (a few MB of WASM linear memory plus a parked thread) is pure waste to keep
+   * which always runs before that. Play can still have happened since the last pause, though, so
+   * the registered [registerUnloadSaver] savers are awaited first. After that the engine (a few MB of WASM linear memory plus a parked thread) is pure waste to keep
    * around while backgrounded. [engine] rebuilds it the next time a screen actually needs it.
    *
    * The comparison is `<`, not `!=`: levels are ordered by severity, and the system may report a
@@ -122,6 +138,17 @@ class PuzzlesApplication :
     super.onTrimMemory(level)
     if (level < ComponentCallbacks2.TRIM_MEMORY_UI_HIDDEN) return
     applicationScope.launch {
+      // Before the engine is taken, so that a saver finds it still open.
+      for (saver in unloadSavers) {
+        runCatching { saver() }
+          .onFailure {
+            Log.w(
+              "PuzzlesApplication",
+              "Saving before unloading the engine failed",
+              it,
+            )
+          }
+      }
       val stale = engineMutex.withLock { engineDeferred.also { engineDeferred = null } }
       _engineInvalidated.emit(Unit)
       // If creating that engine failed there is nothing to close, and rethrowing here would take

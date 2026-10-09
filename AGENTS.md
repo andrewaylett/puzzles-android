@@ -371,8 +371,11 @@ back doesn't pay to rebuild the WASM instance just to immediately discard it aga
 `GameViewModel.onCleared` can run after `UI_HIDDEN` and before any `engineInvalidated` is handled;
 hopping onto the dead thread threw from `onDestroy` and killed the process. For the same reason a
 save that reaches a closed engine is *cancelled*, not failed, and is silent inside `launch` —
-`persist()` logs it, since it means moves since the last save are gone. Saves only happen in
-`onPause`, so anything played after the last pause is lost if the engine fails.
+`persist()` logs it, since it means moves since the last save are gone. Saves happen in `onPause`
+and again, via `EngineProvider.registerUnloadSaver`, just before `onTrimMemory` closes the engine:
+the second exists because play can continue after the last pause (a share sheet pauses us, and
+coming back resumes without pausing again), and the engine owner awaits it while the engine is still
+open. Moves made since the last save are still lost if the engine itself fails mid-play.
 
 ## Vendored icon artwork
 
