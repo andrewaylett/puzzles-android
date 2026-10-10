@@ -178,6 +178,7 @@ class PuzzleSession internal constructor(
         canUndo = midend.canUndo(me),
         canRedo = midend.canRedo(me),
         status = midend.status(me),
+        hasStatusBar = midend.wantsStatusbar(me),
         gameId = midend.getGameId(me),
       )
     }

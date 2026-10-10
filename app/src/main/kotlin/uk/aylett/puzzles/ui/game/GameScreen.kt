@@ -270,10 +270,6 @@ fun GameScreen(
     },
   ) { padding ->
     Column(modifier = Modifier.padding(padding).fillMaxSize()) {
-      if (uiState.frame.busy) {
-        LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
-      }
-
       Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
         if (uiState.loading) {
           CircularProgressIndicator(modifier = Modifier.align(Alignment.Center))
@@ -287,6 +283,12 @@ fun GameScreen(
             modifier = Modifier.fillMaxSize(),
             swapPressGesture = uiState.swapPressGesture,
           )
+        }
+
+        // Overlaid rather than stacked above the canvas: taking layout space would resize the
+        // puzzle every time generation starts or ends.
+        if (uiState.frame.busy) {
+          LinearProgressIndicator(modifier = Modifier.align(Alignment.TopCenter).fillMaxWidth())
         }
 
         if (uiState.frame.status != GameStatus.IN_PROGRESS) {
@@ -313,9 +315,12 @@ fun GameScreen(
         }
       }
 
-      if (uiState.frame.statusText.isNotEmpty()) {
+      // The line is reserved whenever the game has a status bar, even while it is empty, so the
+      // canvas keeps its size as the text comes and goes.
+      if (uiState.frame.hasStatusBar || uiState.frame.statusText.isNotEmpty()) {
         Text(
-          text = uiState.frame.statusText,
+          // A space keeps the line's height when there is no text.
+          text = uiState.frame.statusText.ifEmpty { " " },
           modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp),
           textAlign = TextAlign.Start,
           style = MaterialTheme.typography.bodySmall,

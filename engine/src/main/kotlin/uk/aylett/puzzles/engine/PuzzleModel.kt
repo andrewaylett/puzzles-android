@@ -59,12 +59,14 @@ const val FILL_PENCIL_MARKS_BUTTON = 'M'.code
  * equality, so a redraw that changes nothing here — most animation ticks — publishes nothing and
  * costs the UI no recomposition. [width] and [height] are the physical-pixel size of what was
  * drawn, which the UI needs to map touches back into the puzzle; both are zero until the first
- * frame.
+ * frame. [hasStatusBar] lets the UI reserve the status line even while [statusText] is empty, so
+ * the puzzle does not move when the text appears (Rectangles only has any while dragging).
  */
 data class PuzzleFrame(
   val width: Int = 0,
   val height: Int = 0,
   val statusText: String = "",
+  val hasStatusBar: Boolean = false,
   val canUndo: Boolean = false,
   val canRedo: Boolean = false,
   val status: Int = GameStatus.IN_PROGRESS,
