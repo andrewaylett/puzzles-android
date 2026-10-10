@@ -24,9 +24,10 @@ import uk.aylett.puzzles.R
  * named `<slug>-96d24@2x.png`).
  *
  * Keyed by display name rather than an internal slug because the mid-end exposes no slug — see
- * `wasmmid_game_at`/`gameName` in `WasmMidend.kt`. Two games — Mosaic and Palisade — were added to
- * the collection after that icon set was last regenerated upstream and so have no entry here;
- * [iconFor] returns null for them and the list falls back to no icon, per "icons where available".
+ * `wasmmid_game_at`/`gameName` in `WasmMidend.kt`. Mosaic and Palisade were added to the
+ * collection after that icon set was last regenerated upstream, so their icons are our own renders
+ * of upstream's recipe rather than vendored files. [iconFor] returns null for any game not listed,
+ * and the list falls back to no icon, per "icons where available".
  */
 private val gameIconsByName: Map<String, Int> =
   mapOf(
@@ -47,8 +48,11 @@ private val gameIconsByName: Map<String, Int> =
     "Magnets" to R.drawable.ic_game_magnets,
     "Map" to R.drawable.ic_game_map,
     "Mines" to R.drawable.ic_game_mines,
+    // Not upstream artwork: rendered by us, see AGENTS.md.
+    "Mosaic" to R.drawable.ic_game_mosaic,
     "Net" to R.drawable.ic_game_net,
     "Netslide" to R.drawable.ic_game_netslide,
+    "Palisade" to R.drawable.ic_game_palisade,
     "Pattern" to R.drawable.ic_game_pattern,
     "Pearl" to R.drawable.ic_game_pearl,
     "Pegs" to R.drawable.ic_game_pegs,

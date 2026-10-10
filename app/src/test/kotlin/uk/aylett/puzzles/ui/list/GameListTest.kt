@@ -56,8 +56,13 @@ class GameListTest {
   }
 
   @Test
-  fun gamesAddedAfterTheIconSetHaveNoIcon() {
-    assertNull(iconFor("Mosaic"))
-    assertNull(iconFor("Palisade"))
+  fun gamesAddedAfterTheIconSetUseOurOwnRenders() {
+    assertNotNull(iconFor("Mosaic"))
+    assertNotNull(iconFor("Palisade"))
+  }
+
+  @Test
+  fun unknownGamesHaveNoIcon() {
+    assertNull(iconFor("No Such Puzzle"))
   }
 }

@@ -446,8 +446,17 @@ as `engine/wasm/puzzles-midend.wasm`.
 They map from `GameInfo.name` (the mid-end's display name) via `GameIcons.kt`, keyed by name
 because the mid-end exposes no internal slug — most names differ from their icon filename only in
 case and spacing, except `rect`, whose icon keeps the historical short name despite the game's
-display name being "Rectangles". Two games added after that icon set was last regenerated upstream
-— Mosaic and Palisade — have no matching file and show no icon. Beware names that differ from the
+display name being "Rectangles". Two games added after that icon set was last regenerated upstream — Mosaic and Palisade — have no
+upstream PNG, and the one prior Android port does have art for them but under the ambiguous licence
+described below, so we render them ourselves. Upstream's recipe (`icons/icons.cmake`) is: load
+`icons/<name>.sav` at the game's preferred size, crop a hand-picked rectangle, then `square.pl`
+trims the background, pads to a square and resamples. We ran that with our own engine (the GTK front
+end and ImageMagick it needs are not available), using the `.sav` files and crop rectangles
+(Mosaic `97x97+142+78` of 288x288, Palisade `192x192+0+0` of 292x292) from the upstream tree. The
+screenshot sizes matched upstream's exactly, which is the check its `crop.sh` makes. They differ
+visibly from the vendored icons in two ways: those carry a per-game tinted background and bolder
+text, ours the upstream neutral grey and regular text. Regenerate them if upstream ships its own.
+Beware names that differ from the
 game's own: tracks.c is displayed as "Train Tracks", and a mismatched key fails silently as "no icon".
 
 The launcher icon uses the montage directly as the adaptive foreground, full-bleed: it is a square
