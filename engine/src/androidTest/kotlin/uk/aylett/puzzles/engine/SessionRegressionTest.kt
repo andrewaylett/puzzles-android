@@ -269,4 +269,37 @@ class SessionRegressionTest {
         }
       }
     }
+
+  /**
+   * A restore happens before the UI has reported a viewport, so the mid-end has no tile size yet.
+   * Drawing then made Solo's pencil-mark layout assert (`pbest > 0`), which condemned a perfectly
+   * good save. Restoring must defer drawing until the game has been sized.
+   */
+  @Test
+  fun restoringAPencilMarkedSaveBeforeSizingDoesNotTrap() =
+    runBlocking {
+      val save =
+        listOf(
+          "SAVEFILE:41:Simon Tatham's Portable Puzzle Collection",
+          "VERSION :1:1",
+          "GAME    :4:Solo",
+          "PARAMS  :3:3x3",
+          "CPARAMS :3:3x3",
+          "SEED    :15:322089841822307",
+          "DESC    :63:c9_7c3a3b2_5a8a5e2_4_9a2a1e6b3_9_8b1e6a7a8_4_9e6a1a5_8b9a7c6_9c",
+          "NSTATES :1:3",
+          "STATEPOS:1:3",
+          "MOVE    :6:R7,0,5",
+          "MOVE    :6:P4,3,4",
+          "MOVE    :6:P4,3,5",
+        ).joinToString("\n", postfix = "\n").toByteArray()
+      PuzzleEngine.create(context).use { engine ->
+        val game = engine.games.first { it.name == "Solo" }
+        engine.openGame(game.index).use { session ->
+          assertNull(session.deserialise(save))
+          session.resize(600, 600)
+          assertNotNull(session.saveState())
+        }
+      }
+    }
 }

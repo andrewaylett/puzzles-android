@@ -256,6 +256,13 @@ external will prompt it. Upstream calls `resize_fe()` immediately after `midend_
 `menu_config_event`. The affected paths are preset selection, custom configuration, entering a game
 ID, and restoring a save — each of which can change the dimensions.
 
+**Do not draw before sizing.** Until `midend_size` has run, `tilesize` is 0, and back ends divide it
+up without checking: Solo's pencil-mark layout asserts `pbest > 0` (`draw_number`), where most
+others quietly draw nothing. A restore runs before the UI has reported a viewport, so
+`applySize()` is a no-op there and an unconditional `midend_force_redraw` trapped — and the failure
+handler then blamed the save and quarantined it. `PuzzleSession` therefore only redraws once
+`midend_tilesize > 0`; `resize` does the first real draw.
+
 **`midend_timer` takes the delta since the previous tick**, not the time since the timer started:
 it does `me->anim_pos += tplus`, and upstream resets its timestamp after every call. Passing
 cumulative time races every animation to its end and makes in-game clocks run quadratically fast.

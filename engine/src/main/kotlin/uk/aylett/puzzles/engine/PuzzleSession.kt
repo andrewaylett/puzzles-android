@@ -195,8 +195,18 @@ class PuzzleSession internal constructor(
     sink.setPalette(packed)
   }
 
+  // A mid-end that has not been through midend_size has a tile size of 0, and back ends divide
+  // that up without checking: Solo's pencil-mark layout asserts `pbest > 0`, and the others
+  // quietly draw nothing. A restore reaches here before the UI has told us its viewport, so
+  // drawing is deferred until `resize` has sized the game, which redraws it itself.
+  private fun isSized() = hasGame && midend.tilesize(me) > 0
+
+  private fun forceRedraw() {
+    if (isSized()) midend.forceRedraw(me)
+  }
+
   private fun redrawAndSync() {
-    if (!hasGame) return
+    if (!isSized()) return
     midend.redraw(me)
     syncMeta()
   }
@@ -266,7 +276,7 @@ class PuzzleSession internal constructor(
     if (!hasGame) return@run
     applySize()
     applyPalette()
-    midend.forceRedraw(me)
+    forceRedraw()
     redrawAndSync()
   }
 
@@ -276,7 +286,7 @@ class PuzzleSession internal constructor(
       startNewGame()
       applySize()
       applyPalette()
-      midend.forceRedraw(me)
+      forceRedraw()
       redrawAndSync()
       setBusy(false)
     }
@@ -441,7 +451,7 @@ class PuzzleSession internal constructor(
       startNewGame()
       applySize()
       applyPalette()
-      midend.forceRedraw(me)
+      forceRedraw()
       redrawAndSync()
       setBusy(false)
     }
@@ -520,7 +530,7 @@ class PuzzleSession internal constructor(
           startNewGame()
           applySize()
           applyPalette()
-          midend.forceRedraw(me)
+          forceRedraw()
           setBusy(false)
         }
         redrawAndSync()
@@ -601,7 +611,7 @@ class PuzzleSession internal constructor(
         startNewGame()
         applySize()
         applyPalette()
-        midend.forceRedraw(me)
+        forceRedraw()
         redrawAndSync()
       }
       setBusy(false)
@@ -627,7 +637,7 @@ class PuzzleSession internal constructor(
           changed()
           applySize()
           applyPalette()
-          midend.forceRedraw(me)
+          forceRedraw()
           redrawAndSync()
         }
         error
