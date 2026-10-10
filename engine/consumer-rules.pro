@@ -1,9 +1,5 @@
-# The WASM engine is reached reflectively in places and consists of machine-generated classes that
-# R8 has no way to reason about, so keep it whole. Shrinking it would save little in any case: the
-# bulk is one large generated dispatch class that is entirely live whenever any puzzle is played.
--keep class uk.aylett.puzzles.engine.wasm.** { *; }
--keep class com.dylibso.chicory.** { *; }
--keepclassmembers class com.dylibso.chicory.** { *; }
-
-# PuzzlesModule.meta is loaded as a classpath resource by the generated loader.
--keepattributes *Annotation*
+# The generated module loads PuzzlesModule.meta with Class.getResourceAsStream, a path relative to
+# the class's own package. R8 can't see that dependency, so renaming or repackaging the class would
+# leave the lookup pointing at a resource that is no longer there. Everything else in the engine is
+# linked statically and R8 can trace it.
+-keepnames class uk.aylett.puzzles.engine.wasm.PuzzlesModule
