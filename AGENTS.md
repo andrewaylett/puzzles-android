@@ -455,7 +455,9 @@ end and ImageMagick it needs are not available), using the `.sav` files and crop
 (Mosaic `97x97+142+78` of 288x288, Palisade `192x192+0+0` of 292x292) from the upstream tree. The
 screenshot sizes matched upstream's exactly, which is the check its `crop.sh` makes. They differ
 visibly from the vendored icons in two ways: those carry a per-game tinted background and bolder
-text, ours the upstream neutral grey and regular text. Regenerate them if upstream ships its own.
+text, ours the upstream neutral grey and regular text. Regenerate them if upstream ships its own. The generator is `IconRenderer` in
+`engine/src/androidTest` (run instructions in its KDoc); it also renders Singles and Range, which
+have vendored icons, as a calibration against the real thing.
 Beware names that differ from the
 game's own: tracks.c is displayed as "Train Tracks", and a mismatched key fails silently as "no icon".
 
