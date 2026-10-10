@@ -297,6 +297,25 @@ carry their own game identity, which `wasmmid_identify_game` can sniff without d
 upstream's `list.c` ordering and will shift the moment upstream adds a puzzle, silently reopening
 the wrong game from a stale preference.
 
+**Saves are driven by change, not by lifecycle.** Saving only in `onPause` lost moves: swiping the
+app from recents gives `onPause`, `onDestroy` ~70ms later (cancelling `viewModelScope`, and the save
+with it) and SIGKILL ~140ms after the pause. So `PuzzleSession.revision` counts every change that
+would alter a save (a `StateFlow` of frames cannot: it deduplicates), and `GamePersister` writes
+after 300ms of quiet. It runs in the *application's* scope with the write shielded from
+cancellation, so a ViewModel going away cannot cancel it; `onPause` and `onCleared` flush at once,
+and the flush's engine task is queued before `close()`'s, which the FIFO engine thread then honours.
+What is accepted as lost on an instant kill is one debounce interval. Details worth knowing:
+
+- Nothing is saved until any restore has settled, as an unrestored session holds no game and
+  saving it would overwrite the real save.
+- Identical bytes are not rewritten; a restore seeds the comparison with what it read.
+- Writes are ordered by the request they came from and share a process-wide lock, as a persister
+  can outlive its ViewModel and two must not share the temporary file.
+- A restore marker is cleared by a save only once the game has been laid out, or the player is
+  leaving: an autosave just after restoring proves serialising works, not that drawing does.
+- Timed puzzles serialise their elapsed time, so "ticks never change a save" is approximately true;
+  the pause flush covers it.
+
 ## Settings
 
 Every setting lives in one place, the Settings screen; a puzzle's own Preferences dialog is the
@@ -354,28 +373,24 @@ only clearing storage ended. So:
 The shared `PuzzleEngine` (WASM instance plus its dedicated thread) is discarded and lazily rebuilt
 across the app's lifetime, not just held for the process's — `PuzzlesApplication.onTrimMemory`
 closes it on `TRIM_MEMORY_UI_HIDDEN`, the callback the system fires once every activity has
-stopped and nothing of ours is visible. This is safe only because every `GameViewModel` persists
-its session in `onPause`, which always runs before `UI_HIDDEN`: there is nothing left to save by
-the time the engine goes.
+stopped and nothing of ours is visible. This is safe only because every `GameViewModel` flushes
+its save in `onPause`, which always runs before `UI_HIDDEN`, and saves every change before then as
+it happens (see Persistence): there is nothing left to save by the time the engine goes.
 
 A `GameViewModel` cannot just keep its `PuzzleSession` across this — the engine thread it was
 serialised onto no longer exists, and re-entering it (`PuzzleSession.close()` included, which
 blocks on that thread) would throw. Instead `PuzzlesApplication.engineInvalidated` tells every
 open `GameViewModel` to drop its session reference outright (nothing to free — the whole `Instance`
 is garbage once dereferenced) rather than close it, and `onResume` reopens a fresh session against
-the current engine on demand, restoring from the save `onPause` just wrote. Reopening happens
+the current engine on demand, restoring from the save `onPause` just flushed. Reopening happens
 lazily in `onResume`, not eagerly in the `engineInvalidated` collector, so a screen that never comes
 back doesn't pay to rebuild the WASM instance just to immediately discard it again.
 
 `PuzzleSession.close()` is therefore a no-op on a session whose engine is already closed, because
 `GameViewModel.onCleared` can run after `UI_HIDDEN` and before any `engineInvalidated` is handled;
 hopping onto the dead thread threw from `onDestroy` and killed the process. For the same reason a
-save that reaches a closed engine is *cancelled*, not failed, and is silent inside `launch` —
-`persist()` logs it, since it means moves since the last save are gone. Saves happen in `onPause`
-and again, via `EngineProvider.registerUnloadSaver`, just before `onTrimMemory` closes the engine:
-the second exists because play can continue after the last pause (a share sheet pauses us, and
-coming back resumes without pausing again), and the engine owner awaits it while the engine is still
-open. Moves made since the last save are still lost if the engine itself fails mid-play.
+save that reaches a closed engine is *cancelled*, not failed, and `GamePersister` logs it, since it
+means moves since the last save are gone. Moves made since the last save are still lost if the engine itself fails mid-play.
 
 ## Vendored icon artwork
 
