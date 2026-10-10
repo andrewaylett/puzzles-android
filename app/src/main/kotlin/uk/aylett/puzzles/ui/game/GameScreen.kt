@@ -18,6 +18,7 @@ package uk.aylett.puzzles.ui.game
 import android.content.Intent
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
@@ -62,6 +63,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextAlign
@@ -72,6 +74,7 @@ import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.viewmodel.compose.viewModel
 import kotlinx.coroutines.launch
 import uk.aylett.puzzles.R
+import uk.aylett.puzzles.engine.ColourScheme
 import uk.aylett.puzzles.engine.ConfigForm
 import uk.aylett.puzzles.engine.ConfigSection
 import uk.aylett.puzzles.engine.FILL_PENCIL_MARKS_BUTTON
@@ -124,6 +127,16 @@ fun GameScreen(
       }
     lifecycleOwner.lifecycle.addObserver(observer)
     onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+  }
+
+  // Games draw with their own palette, so the theme has to be handed to them. The background is
+  // what they derive their highlights from; the rest of a dark palette follows from it.
+  val darkTheme = isSystemInDarkTheme()
+  val themeBackground = MaterialTheme.colorScheme.surfaceContainerHigh.toArgb()
+  LaunchedEffect(darkTheme, themeBackground) {
+    viewModel.setColourScheme(
+      if (darkTheme) ColourScheme(dark = true, background = themeBackground) else ColourScheme(),
+    )
   }
 
   LaunchedEffect(uiState.toastMessage) {

@@ -323,6 +323,32 @@ What is accepted as lost on an instant kill is one debounce interval. Details wo
 - Timed puzzles serialise their elapsed time, so "ticks never change a save" is approximately true;
   the pause flush covers it.
 
+## Dark mode and game colours
+
+The mid-end hands us each game's palette as anonymous indices (`midend_colours`); nothing says which
+entry is ink and which is paper. Upstream palettes assume a light background, so in a dark theme
+`PuzzleSession.applyPalette` asks for the palette twice — once against the old light default colour
+(`wasmmid_default_colour`, now `EngineHooks.defaultColour`) and once against the theme's — and
+`PaletteTransform` uses the difference to decide, per entry, what to do:
+
+- **Unchanged between the runs** is a fixed colour the game picked for a light background: adapt it.
+- **Bevels** (highlight/lowlight from `game_mkhighlight`, recognisable as sitting `sqrt(3)/6` from
+  the background or clamped to pure black/white) and the background itself are taken as themed.
+- **Anything else that changed** is the game scaling or mixing the background ("60% of paper" for a
+  text colour). On a dark background that ratio goes to black and the text vanishes (Solo's
+  user-entered digits, Unequal's pencil marks), so these are adapted like fixed colours.
+
+"Adapt" flips OKLab lightness for neutral colours and keeps the lightness of saturated ones, which
+would otherwise turn palettes that differ mainly in hue (Flood, Map, Same Game) into murky darks.
+
+The theme's colour reaches the engine as a `ColourScheme` set through `GameViewModel`, which keeps
+the latest so that a replacement session opens already themed. The default colour is the theme's
+`surfaceContainerHigh`, not `surface`: games derive bevels from it, and on a near-black base the
+lowlight has nowhere to go, leaving Mines' and Flip's tiles indistinguishable from their grid.
+
+Checked by eye on all 40 games on a Pixel 6 Pro; the hand-written index heuristics in
+`PaletteTransform` are the part most likely to need a per-game override if a puzzle is added.
+
 ## Settings
 
 Every setting lives in one place, the Settings screen; a puzzle's own Preferences dialog is the

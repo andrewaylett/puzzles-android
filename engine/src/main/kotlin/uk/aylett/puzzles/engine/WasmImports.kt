@@ -44,6 +44,9 @@ class EngineHooks {
   var onDeactivateTimer: (() -> Unit)? = null
   var onIdsChanged: (() -> Unit)? = null
 
+  /** What `wasmmid_default_colour` reports, packed ARGB; set by the session while it asks for a palette. */
+  @Volatile var defaultColour: Int = ColourScheme.LIGHT_BACKGROUND
+
   private val stderrTail = ArrayDeque<String>()
 
   /**
@@ -104,11 +107,12 @@ class WasmImports(
       env("wasmmid_default_colour", i(1)) { instance, args ->
         val memory = instance.memory()
         val ptr = args[0].toInt()
-        // A light neutral grey; the mid-end uses this only to pick a border colour for the parts
-        // of the window it doesn't draw into itself.
-        memory.writeF32(ptr, 0.9f)
-        memory.writeF32(ptr + 4, 0.9f)
-        memory.writeF32(ptr + 8, 0.9f)
+        // The mid-end uses this to pick a border colour, and games derive their background and
+        // highlight/lowlight from it (`game_mkhighlight`), so it is how a theme reaches them.
+        val argb = hooks.defaultColour
+        memory.writeF32(ptr, ((argb shr 16) and 0xFF) / 255f)
+        memory.writeF32(ptr + 4, ((argb shr 8) and 0xFF) / 255f)
+        memory.writeF32(ptr + 8, (argb and 0xFF) / 255f)
         VOID_RESULT
       },
       env("wasmmid_activate_timer", i()) { _, _ ->

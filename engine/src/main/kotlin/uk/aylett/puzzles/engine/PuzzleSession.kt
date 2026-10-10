@@ -184,17 +184,39 @@ class PuzzleSession internal constructor(
     }
   }
 
+  private var colourScheme = ColourScheme()
+
+  private fun coloursFor(background: Int): FloatArray {
+    hooks.defaultColour = background
+    return midend.colours(me)
+  }
+
   private fun applyPalette() {
-    val rgb = midend.colours(me)
     val packed =
-      IntArray(rgb.size / 3) { i ->
-        val r = (rgb[i * 3] * 255f).toInt().coerceIn(0, 255)
-        val g = (rgb[i * 3 + 1] * 255f).toInt().coerceIn(0, 255)
-        val b = (rgb[i * 3 + 2] * 255f).toInt().coerceIn(0, 255)
-        (0xFF shl 24) or (r shl 16) or (g shl 8) or b
+      if (colourScheme.dark) {
+        // Which entries are fixed colours, rather than derived from the default colour, can only
+        // be found by asking twice; see ColourScheme.
+        PaletteTransform.darken(
+          reference = coloursFor(ColourScheme.LIGHT_BACKGROUND),
+          themed = coloursFor(colourScheme.background),
+        )
+      } else {
+        val rgb = coloursFor(ColourScheme.LIGHT_BACKGROUND)
+        IntArray(rgb.size / 3) { i -> PaletteTransform.pack(rgb.copyOfRange(i * 3, i * 3 + 3)) }
       }
     sink.setPalette(packed)
   }
+
+  /** Re-colours the game to suit the app's theme. Safe before a game exists or is sized. */
+  suspend fun setColourScheme(scheme: ColourScheme) =
+    engineThread.run {
+      if (scheme == colourScheme) return@run
+      colourScheme = scheme
+      if (!isSized()) return@run
+      applyPalette()
+      forceRedraw()
+      redrawAndSync()
+    }
 
   // A mid-end that has not been through midend_size has a tile size of 0, and back ends divide
   // that up without checking: Solo's pencil-mark layout asserts `pbest > 0`, and the others

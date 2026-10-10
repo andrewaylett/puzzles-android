@@ -51,6 +51,7 @@ import uk.aylett.puzzles.data.RecoveryStore
 import uk.aylett.puzzles.data.SavedGameStore
 import uk.aylett.puzzles.data.overlay
 import uk.aylett.puzzles.data.toSettings
+import uk.aylett.puzzles.engine.ColourScheme
 import uk.aylett.puzzles.engine.ConfigField
 import uk.aylett.puzzles.engine.ConfigForm
 import uk.aylett.puzzles.engine.ConfigSection
@@ -118,6 +119,9 @@ class GameViewModel(
   // only, like everything else here.
   private var surface: Surface? = null
   private var surfaceBackground = 0
+
+  // The theme's palette, kept so that a replacement session opens already dressed for it.
+  private var colourScheme = ColourScheme()
 
   /** Whether this session has a game yet, either restored from a save or freshly generated. */
   private var gameStarted = false
@@ -268,6 +272,7 @@ class GameViewModel(
       val loadedPrefs = savedPrefs
       if (loadedPrefs != null) session.loadPrefs(loadedPrefs) else session.applyPrefDefaults()
       overlaySettings(session, prefsStore.sharedSettings.first())
+      session.setColourScheme(colourScheme)
       // A restore only counts if it succeeded; a corrupt or stale save must still leave us able to
       // start a fresh game rather than sitting on an empty session forever.
       if (saved != null) {
@@ -510,6 +515,11 @@ class GameViewModel(
         }
       }
     }
+
+  fun setColourScheme(scheme: ColourScheme) {
+    colourScheme = scheme
+    act { it.setColourScheme(scheme) }
+  }
 
   fun onSizeChanged(
     widthPx: Int,
