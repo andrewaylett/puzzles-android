@@ -72,6 +72,8 @@ data class PuzzleFrame(
   val status: Int = GameStatus.IN_PROGRESS,
   val gameId: String = "",
   val busy: Boolean = false,
+  /** The colour the game drew its background in, packed ARGB; 0 until the first palette. */
+  val background: Int = 0,
 )
 
 /**

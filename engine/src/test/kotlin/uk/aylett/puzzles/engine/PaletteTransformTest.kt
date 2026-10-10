@@ -54,6 +54,15 @@ class PaletteTransformTest {
   }
 
   @Test
+  fun `a scaled colour that happens to sit a bevel's distance away is not a bevel`() {
+    val base = floatArrayOf(0.2f, 0.2f, 0.2f)
+    // (0, 0.15, 0) is sqrt(3)/6 from the base but not on the line to black: it is Solo's green.
+    val ref = paper + floatArrayOf(0f, 0.54f, 0f)
+    val out = PaletteTransform.darken(ref, base + floatArrayOf(0f, 0.15f, 0f))
+    assertTrue(lum(out[1]) > 40)
+  }
+
+  @Test
   fun `saturated colours keep their lightness so hues stay distinct`() {
     val red = floatArrayOf(1f, 0f, 0f)
     val out = PaletteTransform.adapt(red)

@@ -377,6 +377,15 @@ value always wins over it.
 - "Taps cycle all states" is only offered in a puzzle that sets `STYLUS_SUPPORT`
   (`GameInfo.supportsStylus`, an allowlist for the same reason as `canFillPencilMarks`).
 
+## Several sessions, one set of hooks
+
+A `GameViewModel` (and its session) is kept when the player goes back to the list, so many sessions
+can be alive on the one engine, while the WASM imports call into a single `EngineHooks`. Binding
+the hooks once at session creation sent every session's drawing and timer callbacks to the newest:
+a Mines clock ticked into the next puzzle's status bar and a stale Netslide frame was painted over
+whatever opened afterwards. Each call therefore binds the hooks to its own session first, and a
+game's screen pauses its ViewModel when it leaves composition so that hidden sessions stop ticking.
+
 ## Engine failures
 
 **A trap is an exception, not an error return, and it condemns the whole engine.** A failed

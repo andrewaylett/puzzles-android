@@ -17,6 +17,7 @@ package uk.aylett.puzzles.engine.render
 
 import android.graphics.Bitmap
 import android.view.Surface
+import java.util.concurrent.Executors
 
 /**
  * Puts finished frames on a [Surface] owned by the UI, from the engine thread.
@@ -45,8 +46,49 @@ internal class SurfacePresenter {
 
   private val lock = Any()
 
+  // Whether a frame has gone out since the surface was attached. Only [fillBlank] reads it, to
+  // avoid painting over a puzzle that arrived while it was waiting for the lock.
+  @Volatile private var presented = false
+
+  private val filler =
+    Executors.newSingleThreadExecutor { r -> Thread(r, "surface-filler").apply { isDaemon = true } }
+
   // Replaced as a unit so that present never sees a new surface with an old background.
   @Volatile private var target: Target? = null
+
+  /**
+   * Paints the whole surface in its background colour, unless a frame has already been presented.
+   * A new surface is black until something is posted, and the engine thread — the only thing that
+   * can present a puzzle — may be busy generating one for seconds. Runs on its own thread for the
+   * same reason: attaching must not wait on the buffer queue (see the class documentation).
+   */
+  fun fillBlank() {
+    filler.execute {
+      synchronized(lock) {
+        if (presented) return@execute
+        val current = target ?: return@execute
+        val surface = current.surface.takeIf { it.isValid } ?: return@execute
+        val canvas =
+          try {
+            surface.lockCanvas(null)
+          } catch (_: IllegalArgumentException) {
+            return@execute
+          } catch (_: Surface.OutOfResourcesException) {
+            return@execute
+          }
+        try {
+          canvas.drawColor(current.background)
+        } finally {
+          surface.unlockCanvasAndPost(canvas)
+        }
+      }
+    }
+  }
+
+  /** Changes the fill on the current surface, if any; the next frame uses it. */
+  fun setBackground(background: Int) {
+    target = target?.let { Target(it.surface, background) }
+  }
 
   /**
    * Replaces the target surface, or detaches with null. Callable from any thread. [background]
@@ -59,6 +101,7 @@ internal class SurfacePresenter {
   ) {
     if (surface != null) {
       // Lock-free: see the class documentation.
+      presented = false
       target = Target(surface, background)
       return
     }
@@ -77,6 +120,7 @@ internal class SurfacePresenter {
    */
   fun present(bitmap: Bitmap) {
     synchronized(lock) {
+      presented = true
       val current = target ?: return
       val surface = current.surface.takeIf { it.isValid } ?: return
       val canvas =

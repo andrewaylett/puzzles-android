@@ -126,18 +126,21 @@ fun GameScreen(
         }
       }
     lifecycleOwner.lifecycle.addObserver(observer)
-    onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    onDispose {
+      lifecycleOwner.lifecycle.removeObserver(observer)
+      // The ViewModel is kept for a quick return, but nothing is looking at it now: stop its
+      // clock and animation, and save. Coming back re-adds the observer, which resumes it.
+      viewModel.onPause()
+    }
   }
 
-  // Games draw with their own palette, so the theme has to be handed to them. The background is
-  // what they derive their highlights from; the rest of a dark palette follows from it.
+  // Games draw with their own palette, so the theme has to be handed to them. Each game gets a
+  // faintly tinted background seeded from its id; what they derive their highlights from is that
+  // colour, and the rest of a dark palette follows from it.
   val darkTheme = isSystemInDarkTheme()
-  val themeBackground = MaterialTheme.colorScheme.surfaceContainerHigh.toArgb()
-  LaunchedEffect(darkTheme, themeBackground) {
-    viewModel.setColourScheme(
-      if (darkTheme) ColourScheme(dark = true, background = themeBackground) else ColourScheme(),
-    )
-  }
+  val gameId = uiState.frame.gameId
+  val scheme = remember(darkTheme, gameId) { ColourScheme.forSeed(darkTheme, gameId) }
+  LaunchedEffect(scheme) { viewModel.setColourScheme(scheme) }
 
   LaunchedEffect(uiState.toastMessage) {
     val message = uiState.toastMessage
@@ -173,174 +176,187 @@ fun GameScreen(
       }
     }
 
-  Scaffold(
-    snackbarHost = {
-      SnackbarHost(snackbarHostState) { data -> Snackbar(snackbarData = data) }
-    },
-    topBar = {
-      TopAppBar(
-        title = { Text(uiState.game?.name ?: stringResource(R.string.loading)) },
-        navigationIcon = {
-          IconButton(onClick = onBack) {
-            Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = null)
-          }
-        },
-        actions = {
-          IconButton(onClick = viewModel::newGame) {
-            Icon(
-              Icons.Filled.Refresh,
-              contentDescription = stringResource(R.string.action_new_game),
-            )
-          }
-          IconButton(onClick = viewModel::undo, enabled = uiState.frame.canUndo) {
-            Icon(
-              Icons.AutoMirrored.Filled.Undo,
-              contentDescription = stringResource(R.string.action_undo),
-            )
-          }
-          IconButton(onClick = viewModel::redo, enabled = uiState.frame.canRedo) {
-            Icon(
-              Icons.AutoMirrored.Filled.Redo,
-              contentDescription = stringResource(R.string.action_redo),
-            )
-          }
-          IconButton(onClick = { activeDialog = ActiveDialog.PRESETS }) {
-            Icon(
-              Icons.Filled.GridView,
-              contentDescription = stringResource(R.string.action_type),
-            )
-          }
-          FilledIconToggleButton(
-            checked = uiState.swapPressGesture,
-            onCheckedChange = { viewModel.toggleSwapPressGesture() },
-            colors =
-              IconButtonDefaults.filledIconToggleButtonColors(
-                containerColor = Color.Transparent,
-                contentColor = LocalContentColor.current,
-                checkedContainerColor = MaterialTheme.colorScheme.primary,
-                checkedContentColor = MaterialTheme.colorScheme.onPrimary,
-              ),
-          ) {
-            Icon(
-              Icons.Filled.SwapVert,
-              contentDescription = stringResource(R.string.action_swap_press_gesture),
-            )
-          }
-          IconButton(onClick = { menuExpanded = true }) {
-            Icon(Icons.Filled.MoreVert, contentDescription = null)
-          }
-          GameOverflowMenu(
-            expanded = menuExpanded,
-            canSolve = uiState.game?.canSolve == true,
-            canFillPencilMarks = uiState.game?.canFillPencilMarks == true,
-            showStylusTaps = uiState.game?.supportsStylus == true,
-            stylusTaps = uiState.stylusTaps,
-            onToggleStylusTaps = viewModel::toggleStylusTaps,
-            onDismiss = { menuExpanded = false },
-            onRestart = {
-              menuExpanded = false
-              viewModel.restart()
-            },
-            onSolve = {
-              menuExpanded = false
-              viewModel.solve()
-            },
-            onFillPencilMarks = {
-              menuExpanded = false
-              viewModel.key(FILL_PENCIL_MARKS_BUTTON)
-            },
-            onPreferences = {
-              menuExpanded = false
-              activeDialog = ActiveDialog.PREFS
-            },
-            onEnterGameId = {
-              menuExpanded = false
-              activeDialog = ActiveDialog.GAME_ID
-            },
-            onShareGameId = {
-              menuExpanded = false
-              scope.launch {
-                val id = viewModel.gameId()
-                val send =
-                  Intent(Intent.ACTION_SEND).apply {
-                    type = "text/plain"
-                    putExtra(Intent.EXTRA_TEXT, id)
-                  }
-                context.startActivity(Intent.createChooser(send, null))
-              }
-            },
-            onImport = {
-              menuExpanded = false
-              importLauncher.launch(arrayOf("*/*"))
-            },
-            onExport = {
-              menuExpanded = false
-              exportLauncher.launch("${uiState.game?.name ?: "puzzle"}.sav")
-            },
-          )
-        },
-      )
-    },
-  ) { padding ->
-    Column(modifier = Modifier.padding(padding).fillMaxSize()) {
-      Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
-        if (uiState.loading) {
-          CircularProgressIndicator(modifier = Modifier.align(Alignment.Center))
-        } else {
-          PuzzleCanvas(
-            frame = uiState.frame,
-            onSurfaceChanged = viewModel::attachSurface,
-            onSurfaceDestroyed = viewModel::detachSurface,
-            onSizeChanged = viewModel::onSizeChanged,
-            onPointerEvent = viewModel::pointer,
-            modifier = Modifier.fillMaxSize(),
-            swapPressGesture = uiState.swapPressGesture,
-          )
-        }
-
-        // Overlaid rather than stacked above the canvas: taking layout space would resize the
-        // puzzle every time generation starts or ends.
-        if (uiState.frame.busy) {
-          LinearProgressIndicator(modifier = Modifier.align(Alignment.TopCenter).fillMaxWidth())
-        }
-
-        if (uiState.frame.status != GameStatus.IN_PROGRESS) {
-          val label =
-            if (uiState.frame.status == GameStatus.WON) {
-              stringResource(R.string.status_won)
-            } else {
-              stringResource(R.string.status_lost)
+  // The screen around the puzzle takes the colour the game itself drew its background in, so the
+  // two are one surface. Until the game has drawn, the plain theme colour: the tint is only
+  // known once it has, and guessing would show one colour then another.
+  val gameBackground =
+    uiState.frame.background
+      .takeIf { it != 0 }
+      ?.let { Color(it) }
+      ?: MaterialTheme.colorScheme.background
+  MaterialTheme(
+    colorScheme =
+      MaterialTheme.colorScheme.copy(background = gameBackground, surface = gameBackground),
+  ) {
+    Scaffold(
+      snackbarHost = {
+        SnackbarHost(snackbarHostState) { data -> Snackbar(snackbarData = data) }
+      },
+      topBar = {
+        TopAppBar(
+          title = { Text(uiState.game?.name ?: stringResource(R.string.loading)) },
+          navigationIcon = {
+            IconButton(onClick = onBack) {
+              Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = null)
             }
-          // Tapping the banner starts the next game: once the puzzle is over it is the obvious
-          // thing to reach for, and it saves a trip into the menu.
-          Surface(
-            onClick = viewModel::newGame,
-            modifier = Modifier.align(Alignment.TopCenter).padding(top = 12.dp),
-            color = MaterialTheme.colorScheme.primaryContainer,
-            shape = MaterialTheme.shapes.medium,
-          ) {
-            Text(
-              text = label,
-              modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
-              color = MaterialTheme.colorScheme.onPrimaryContainer,
+          },
+          actions = {
+            IconButton(onClick = viewModel::newGame) {
+              Icon(
+                Icons.Filled.Refresh,
+                contentDescription = stringResource(R.string.action_new_game),
+              )
+            }
+            IconButton(onClick = viewModel::undo, enabled = uiState.frame.canUndo) {
+              Icon(
+                Icons.AutoMirrored.Filled.Undo,
+                contentDescription = stringResource(R.string.action_undo),
+              )
+            }
+            IconButton(onClick = viewModel::redo, enabled = uiState.frame.canRedo) {
+              Icon(
+                Icons.AutoMirrored.Filled.Redo,
+                contentDescription = stringResource(R.string.action_redo),
+              )
+            }
+            IconButton(onClick = { activeDialog = ActiveDialog.PRESETS }) {
+              Icon(
+                Icons.Filled.GridView,
+                contentDescription = stringResource(R.string.action_type),
+              )
+            }
+            FilledIconToggleButton(
+              checked = uiState.swapPressGesture,
+              onCheckedChange = { viewModel.toggleSwapPressGesture() },
+              colors =
+                IconButtonDefaults.filledIconToggleButtonColors(
+                  containerColor = Color.Transparent,
+                  contentColor = LocalContentColor.current,
+                  checkedContainerColor = MaterialTheme.colorScheme.primary,
+                  checkedContentColor = MaterialTheme.colorScheme.onPrimary,
+                ),
+            ) {
+              Icon(
+                Icons.Filled.SwapVert,
+                contentDescription = stringResource(R.string.action_swap_press_gesture),
+              )
+            }
+            IconButton(onClick = { menuExpanded = true }) {
+              Icon(Icons.Filled.MoreVert, contentDescription = null)
+            }
+            GameOverflowMenu(
+              expanded = menuExpanded,
+              canSolve = uiState.game?.canSolve == true,
+              canFillPencilMarks = uiState.game?.canFillPencilMarks == true,
+              showStylusTaps = uiState.game?.supportsStylus == true,
+              stylusTaps = uiState.stylusTaps,
+              onToggleStylusTaps = viewModel::toggleStylusTaps,
+              onDismiss = { menuExpanded = false },
+              onRestart = {
+                menuExpanded = false
+                viewModel.restart()
+              },
+              onSolve = {
+                menuExpanded = false
+                viewModel.solve()
+              },
+              onFillPencilMarks = {
+                menuExpanded = false
+                viewModel.key(FILL_PENCIL_MARKS_BUTTON)
+              },
+              onPreferences = {
+                menuExpanded = false
+                activeDialog = ActiveDialog.PREFS
+              },
+              onEnterGameId = {
+                menuExpanded = false
+                activeDialog = ActiveDialog.GAME_ID
+              },
+              onShareGameId = {
+                menuExpanded = false
+                scope.launch {
+                  val id = viewModel.gameId()
+                  val send =
+                    Intent(Intent.ACTION_SEND).apply {
+                      type = "text/plain"
+                      putExtra(Intent.EXTRA_TEXT, id)
+                    }
+                  context.startActivity(Intent.createChooser(send, null))
+                }
+              },
+              onImport = {
+                menuExpanded = false
+                importLauncher.launch(arrayOf("*/*"))
+              },
+              onExport = {
+                menuExpanded = false
+                exportLauncher.launch("${uiState.game?.name ?: "puzzle"}.sav")
+              },
+            )
+          },
+        )
+      },
+    ) { padding ->
+      Column(modifier = Modifier.padding(padding).fillMaxSize()) {
+        Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
+          if (uiState.loading) {
+            CircularProgressIndicator(modifier = Modifier.align(Alignment.Center))
+          } else {
+            PuzzleCanvas(
+              frame = uiState.frame,
+              onSurfaceChanged = viewModel::attachSurface,
+              onSurfaceDestroyed = viewModel::detachSurface,
+              onSizeChanged = viewModel::onSizeChanged,
+              onPointerEvent = viewModel::pointer,
+              modifier = Modifier.fillMaxSize(),
+              swapPressGesture = uiState.swapPressGesture,
             )
           }
+
+          // Overlaid rather than stacked above the canvas: taking layout space would resize the
+          // puzzle every time generation starts or ends.
+          if (uiState.frame.busy) {
+            LinearProgressIndicator(modifier = Modifier.align(Alignment.TopCenter).fillMaxWidth())
+          }
+
+          if (uiState.frame.status != GameStatus.IN_PROGRESS) {
+            val label =
+              if (uiState.frame.status == GameStatus.WON) {
+                stringResource(R.string.status_won)
+              } else {
+                stringResource(R.string.status_lost)
+              }
+            // Tapping the banner starts the next game: once the puzzle is over it is the obvious
+            // thing to reach for, and it saves a trip into the menu.
+            Surface(
+              onClick = viewModel::newGame,
+              modifier = Modifier.align(Alignment.TopCenter).padding(top = 12.dp),
+              color = MaterialTheme.colorScheme.primaryContainer,
+              shape = MaterialTheme.shapes.medium,
+            ) {
+              Text(
+                text = label,
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+                color = MaterialTheme.colorScheme.onPrimaryContainer,
+              )
+            }
+          }
         }
-      }
 
-      // The line is reserved whenever the game has a status bar, even while it is empty, so the
-      // canvas keeps its size as the text comes and goes.
-      if (uiState.frame.hasStatusBar || uiState.frame.statusText.isNotEmpty()) {
-        Text(
-          // A space keeps the line's height when there is no text.
-          text = uiState.frame.statusText.ifEmpty { " " },
-          modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp),
-          textAlign = TextAlign.Start,
-          style = MaterialTheme.typography.bodySmall,
-        )
-      }
+        // The line is reserved whenever the game has a status bar, even while it is empty, so the
+        // canvas keeps its size as the text comes and goes.
+        if (uiState.frame.hasStatusBar || uiState.frame.statusText.isNotEmpty()) {
+          Text(
+            // A space keeps the line's height when there is no text.
+            text = uiState.frame.statusText.ifEmpty { " " },
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp),
+            textAlign = TextAlign.Start,
+            style = MaterialTheme.typography.bodySmall,
+          )
+        }
 
-      KeyRow(hints = uiState.keyHints, onKey = viewModel::key, gameName = uiState.game?.name)
+        KeyRow(hints = uiState.keyHints, onKey = viewModel::key, gameName = uiState.game?.name)
+      }
     }
   }
 

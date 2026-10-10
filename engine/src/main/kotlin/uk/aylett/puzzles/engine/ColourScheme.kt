@@ -35,6 +35,37 @@ data class ColourScheme(
   val background: Int = LIGHT_BACKGROUND,
 ) {
   companion object {
+    /**
+     * A scheme whose background is a barely-tinted neutral with a hue taken from [seed], so each
+     * game gets its own wash of colour without disturbing games whose palettes are tuned against
+     * a neutral background. Lightness stays where [game_mkhighlight] can derive bevels from it:
+     * nearer white or black than `sqrt(3)/6` and it moves the background itself.
+     */
+    fun forSeed(
+      dark: Boolean,
+      seed: String,
+    ): ColourScheme {
+      var hash = 2166136261L
+      for (c in seed) hash = ((hash xor c.code.toLong()) * 16777619L) and 0xFFFFFFFFL
+      val hue = (hash % 360).toFloat()
+      return ColourScheme(
+        dark,
+        PaletteTransform.oklch(if (dark) 0.32f else 0.92f, TINT_CHROMA, hue),
+      )
+    }
+
+    private const val TINT_CHROMA = 0.025f
+
+    // Back ends scale the background to make other colours (Twiddle multiplies by 1.1) and assert
+    // the result is still within 0..1, so no channel may exceed 1/1.1. Upstream's own default is a
+    // grey no lighter than this.
+    private const val MAX_CHANNEL = 0xE0
+
+    private fun capChannels(argb: Int): Int {
+      fun c(shift: Int) = minOf((argb shr shift) and 0xFF, MAX_CHANNEL)
+      return (0xFF shl 24) or (c(16) shl 16) or (c(8) shl 8) or c(0)
+    }
+
     /** What the front end has always reported as the default colour: a light neutral grey. */
     const val LIGHT_BACKGROUND = 0xFFE6E6E6.toInt()
   }
@@ -74,14 +105,37 @@ internal object PaletteTransform {
     }
   }
 
+  /**
+   * `game_mkhighlight` mixes the background towards white (highlight) or black (lowlight) by one
+   * proportion, for all three channels, until it is `sqrt(3)/6` away — or clamps to pure white or
+   * black. Distance alone is not enough: a game scaling the background for a text colour can land
+   * on the same distance by coincidence (Solo's green digits did, against one particular tint), so
+   * the colour must also lie on the line to white or black.
+   */
   private fun isBevel(
     c: FloatArray,
     base: FloatArray,
   ): Boolean {
-    val pure = c.all { it == 0f } || c.all { it == 1f }
+    if (c.all { it == 0f } || c.all { it == 1f }) return true
     var d = 0f
     for (k in 0..2) d += (c[k] - base[k]) * (c[k] - base[k])
-    return pure || abs(sqrt(d) - BEVEL_DISTANCE) < 0.02f
+    if (abs(sqrt(d) - BEVEL_DISTANCE) > 0.03f) return false
+
+    fun uniform(proportions: List<Float>) = proportions.max() - proportions.min() < 0.05f
+    val towardsWhite = (0..2).map { (c[it] - base[it]) / (1f - base[it]).coerceAtLeast(0.01f) }
+    val towardsBlack = (0..2).map { (base[it] - c[it]) / base[it].coerceAtLeast(0.01f) }
+    return uniform(towardsWhite) || uniform(towardsBlack)
+  }
+
+  fun oklch(
+    lightness: Float,
+    chroma: Float,
+    hueDegrees: Float,
+  ): Int {
+    val h = Math.toRadians(hueDegrees.toDouble())
+    return pack(
+      fromOklab(lightness, chroma * Math.cos(h).toFloat(), chroma * Math.sin(h).toFloat()),
+    )
   }
 
   fun pack(rgb: FloatArray): Int {

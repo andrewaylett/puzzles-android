@@ -35,8 +35,10 @@ private val VOID_RESULT: LongArray? = null
  * There is exactly one [Instance] (one WASM module can play any of the 40 puzzles), but imports
  * are wired up once, before any [uk.aylett.puzzles.engine.PuzzleSession] exists. Every call into
  * the module is serialised onto the engine thread (see `EngineThread`), so at any instant at most
- * one session is "the one making a call" — that session installs itself here for the duration and
- * clears itself again on [PuzzleSession.close]; there is no need for per-call multiplexing.
+ * one session is "the one making a call". Sessions can outlive their screens, so several may be
+ * alive at once; each therefore binds itself here at the start of every call (see
+ * `PuzzleSession.bindHooks`) rather than once at creation, or the newest session would receive
+ * everyone's callbacks. It clears itself again on [PuzzleSession.close].
  */
 class EngineHooks {
   var drawingSink: DrawingSink? = null

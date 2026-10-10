@@ -32,6 +32,9 @@ import java.util.concurrent.atomic.AtomicReference
 private const val DOMINOSA = "Dominosa"
 private const val LOG_TAG = "PuzzleSession"
 
+// How far (in 0..sqrt(3) RGB distance) a game may have moved the background we offered it.
+private const val MAX_BACKGROUND_SHIFT = 0.15f
+
 /** `PKR_SOME_EFFECT` from `puzzles.h`: the only `midend_process_key` result that changed anything. */
 private const val PKR_SOME_EFFECT = 1
 
@@ -110,13 +113,27 @@ class PuzzleSession internal constructor(
   private val _animating = MutableStateFlow(false)
   val animating: StateFlow<Boolean> = _animating.asStateFlow()
 
-  init {
+  /**
+   * Points the shared [EngineHooks] at this session. Sessions outlive their screens (a game's
+   * ViewModel is kept when the player goes back to the list), so several can be alive at once on
+   * one engine, and whichever installed itself last would otherwise receive every session's
+   * drawing and timer callbacks: a Mines clock still ticking into the next puzzle's status bar, a
+   * stale Netslide frame painted over whatever is open. Binding at the start of each call, on the
+   * engine thread where calls are serialised, makes the callbacks belong to the caller.
+   */
+  private fun bindHooks() {
     hooks.drawingSink = sink
     hooks.onActivateTimer = ::onActivateTimer
     hooks.onDeactivateTimer = ::onDeactivateTimer
     hooks.onIdsChanged =
       { /* Nothing is cached from the id/seed today; ready for a future need. */ }
   }
+
+  private suspend fun <T> onEngine(block: suspend () -> T): T =
+    engineThread.run {
+      bindHooks()
+      block()
+    }
 
   /**
    * How many frames the mid-end has finished drawing, whether or not a surface was there to show
@@ -157,6 +174,7 @@ class PuzzleSession internal constructor(
     background: Int,
   ) {
     sink.presenter.attach(surface, background)
+    sink.presenter.fillBlank()
     engineThread.scope.launch { sink.represent() }
   }
 
@@ -169,7 +187,7 @@ class PuzzleSession internal constructor(
   }
 
   /** A copy of the pixels last drawn, or null before the first frame. For tests and diagnostics. */
-  suspend fun snapshot(): Bitmap? = engineThread.run { sink.snapshot() }
+  suspend fun snapshot(): Bitmap? = onEngine { sink.snapshot() }
 
   private fun syncMeta() {
     if (!hasGame) return
@@ -180,11 +198,29 @@ class PuzzleSession internal constructor(
         status = midend.status(me),
         hasStatusBar = midend.wantsStatusbar(me),
         gameId = midend.getGameId(me),
+        background = backgroundArgb,
       )
     }
   }
 
   private var colourScheme = ColourScheme()
+  private var backgroundArgb = 0
+
+  // Entry 0 is the background by convention, but not in every game: Untangle's is a darker "system
+  // background" and, themed, comes out black. A game's background is the colour we offered, give or
+  // take what `game_mkhighlight` moves it by; anything further away isn't it.
+  private fun screenBackground(entry0: Int): Int {
+    fun channel(
+      c: Int,
+      shift: Int,
+    ) = ((c shr shift) and 0xFF) / 255f
+    var d = 0f
+    for (shift in intArrayOf(16, 8, 0)) {
+      val delta = channel(entry0, shift) - channel(colourScheme.background, shift)
+      d += delta * delta
+    }
+    return if (kotlin.math.sqrt(d) < MAX_BACKGROUND_SHIFT) entry0 else colourScheme.background
+  }
 
   private fun coloursFor(background: Int): FloatArray {
     hooks.defaultColour = background
@@ -201,18 +237,25 @@ class PuzzleSession internal constructor(
           themed = coloursFor(colourScheme.background),
         )
       } else {
-        val rgb = coloursFor(ColourScheme.LIGHT_BACKGROUND)
+        val rgb = coloursFor(colourScheme.background)
         IntArray(rgb.size / 3) { i -> PaletteTransform.pack(rgb.copyOfRange(i * 3, i * 3 + 3)) }
       }
     sink.setPalette(packed)
+    // By convention entry 0 is the background. Whatever the game made of the colour we offered
+    // (bevel derivation can shift it), the screen around the puzzle should match what it drew.
+    val screen = screenBackground(packed[0])
+    sink.presenter.setBackground(screen)
+    // Published by [syncMeta], once the redraw has gone out: the UI repaints the screen around the
+    // puzzle when this changes, and doing it ahead of the surface shows one colour then the other.
+    backgroundArgb = screen
   }
 
   /** Re-colours the game to suit the app's theme. Safe before a game exists or is sized. */
   suspend fun setColourScheme(scheme: ColourScheme) =
-    engineThread.run {
-      if (scheme == colourScheme) return@run
+    onEngine {
+      if (scheme == colourScheme) return@onEngine
       colourScheme = scheme
-      if (!isSized()) return@run
+      if (!isSized()) return@onEngine
       applyPalette()
       forceRedraw()
       redrawAndSync()
@@ -289,14 +332,14 @@ class PuzzleSession internal constructor(
     widthPx: Int,
     heightPx: Int,
     density: Float = 1f,
-  ) = engineThread.run {
+  ) = onEngine {
     // Recorded even when there is no game yet: whichever call generates the first one will size it
     // to this viewport, so an early resize is remembered rather than lost.
     viewportWidth = widthPx
     viewportHeight = heightPx
     this.density = density
     this.scale = density.toInt().coerceAtLeast(1)
-    if (!hasGame) return@run
+    if (!hasGame) return@onEngine
     applySize()
     applyPalette()
     forceRedraw()
@@ -304,7 +347,7 @@ class PuzzleSession internal constructor(
   }
 
   suspend fun newGame() =
-    engineThread.run {
+    onEngine {
       setBusy(true)
       startNewGame()
       applySize()
@@ -315,25 +358,25 @@ class PuzzleSession internal constructor(
     }
 
   suspend fun restart() =
-    engineThread.run {
+    onEngine {
       midend.restartGame(me)
       changed()
       redrawAndSync()
     }
 
   suspend fun undo() =
-    engineThread.run {
+    onEngine {
       processKey(0, 0, Buttons.UI_UNDO)
     }
 
   suspend fun redo() =
-    engineThread.run {
+    onEngine {
       processKey(0, 0, Buttons.UI_REDO)
     }
 
   /** @return an error message, or null on success. */
   suspend fun solve(): String? =
-    engineThread.run {
+    onEngine {
       setBusy(true)
       val error = midend.solve(me)
       if (error == null) changed()
@@ -375,7 +418,7 @@ class PuzzleSession internal constructor(
       // Only the call that finds the slot empty queues a task; later drags just replace the
       // contents and are picked up by the task already waiting.
       if (pendingDrag.getAndSet(event) != null) return
-      engineThread.run {
+      onEngine {
         pendingDrag.getAndSet(null)?.let { processPointer(it) }
       }
     } else {
@@ -383,7 +426,7 @@ class PuzzleSession internal constructor(
       // event must not be hoisted ahead of it by the drag task still waiting in the queue. The
       // taken drag is replayed first so the press/release still sees the position it follows.
       val stale = pendingDrag.getAndSet(null)
-      engineThread.run {
+      onEngine {
         stale?.let { processPointer(it) }
         processPointer(event)
       }
@@ -406,12 +449,12 @@ class PuzzleSession internal constructor(
   }
 
   suspend fun key(button: Int) =
-    engineThread.run {
+    onEngine {
       processKey(0, 0, button)
     }
 
   suspend fun presets(): List<PresetEntry> =
-    engineThread.run {
+    onEngine {
       val menu = midend.getPresets(me)
       // Reading a preset's parameters means loading them into the mid-end, which is the only way to
       // see them; put the current ones back afterwards. midend_set_config only records parameters,
@@ -448,12 +491,12 @@ class PuzzleSession internal constructor(
    * does not disturb the game in progress.
    */
   suspend fun currentPresetId(): Int =
-    engineThread.run {
+    onEngine {
       val direct = midend.whichPreset(me)
-      if (direct != -1) return@run direct
+      if (direct != -1) return@onEngine direct
       val original = readConfigForm(ConfigSection.SETTINGS).fields
-      val swapped = transposed(original, onlyIfLandscape = false) ?: return@run direct
-      if (writeConfig(ConfigSection.SETTINGS, swapped) != null) return@run direct
+      val swapped = transposed(original, onlyIfLandscape = false) ?: return@onEngine direct
+      if (writeConfig(ConfigSection.SETTINGS, swapped) != null) return@onEngine direct
       try {
         midend.whichPreset(me)
       } finally {
@@ -462,7 +505,7 @@ class PuzzleSession internal constructor(
     }
 
   suspend fun applyPreset(id: Int) =
-    engineThread.run {
+    onEngine {
       setBusy(true)
       val menu = midend.getPresets(me)
       val params = midend.presetMenuLookupById(menu, id)
@@ -479,7 +522,7 @@ class PuzzleSession internal constructor(
       setBusy(false)
     }
 
-  suspend fun config(section: Int): ConfigForm = engineThread.run { readConfigForm(section) }
+  suspend fun config(section: Int): ConfigForm = onEngine { readConfigForm(section) }
 
   /** Engine thread only. */
   private fun readConfigForm(section: Int): ConfigForm {
@@ -539,7 +582,7 @@ class PuzzleSession internal constructor(
     section: Int,
     fields: List<ConfigField>,
   ): String? =
-    engineThread.run {
+    onEngine {
       val error = writeConfig(section, fields)
       if (error == null) {
         // midend_set_config only records the new settings; it never generates. Upstream's own
@@ -582,7 +625,7 @@ class PuzzleSession internal constructor(
   }
 
   suspend fun keyHints(): List<KeyHint> =
-    engineThread.run {
+    onEngine {
       val (keys, n) = midend.requestKeys(me)
       try {
         val hints =
@@ -620,11 +663,11 @@ class PuzzleSession internal constructor(
   }
 
   /** @return the current game's id, or an empty string if no game has been generated yet. */
-  suspend fun gameId(): String = engineThread.run { if (hasGame) midend.getGameId(me) else "" }
+  suspend fun gameId(): String = onEngine { if (hasGame) midend.getGameId(me) else "" }
 
   /** @return an error message, or null on success. */
   suspend fun setGameId(id: String): String? =
-    engineThread.run {
+    onEngine {
       setBusy(true)
       // midend_game_id only parses and stores the id; it does not generate. Upstream always
       // follows a successful call with midend_new_game (see gtk.c), and without it the mid-end is
@@ -642,15 +685,15 @@ class PuzzleSession internal constructor(
     }
 
   suspend fun textFormat(): String? =
-    engineThread.run {
+    onEngine {
       if (!midend.canFormatAsTextNow(me)) null else midend.textFormat(me)
     }
 
-  suspend fun serialise(): ByteArray = engineThread.run { midend.serialise(me) }
+  suspend fun serialise(): ByteArray = onEngine { midend.serialise(me) }
 
   /** @return an error message, or null on success. */
   suspend fun deserialise(bytes: ByteArray): String? =
-    engineThread.run {
+    onEngine {
       setBusy(true)
       try {
         val error = midend.deserialise(me, bytes)
@@ -669,7 +712,7 @@ class PuzzleSession internal constructor(
       }
     }
 
-  suspend fun savePrefs(): ByteArray = engineThread.run { midend.savePrefs(me) }
+  suspend fun savePrefs(): ByteArray = onEngine { midend.savePrefs(me) }
 
   /**
    * Whether the engine this session belongs to has been closed, after which every call into it
@@ -695,12 +738,12 @@ class PuzzleSession internal constructor(
    * new, so two separate calls could lose the second.
    */
   suspend fun saveState(): SavedState? =
-    engineThread.run {
+    onEngine {
       if (!hasGame) null else SavedState(midend.serialise(me), midend.savePrefs(me))
     }
 
   suspend fun loadPrefs(bytes: ByteArray) =
-    engineThread.run {
+    onEngine {
       // wasmmid_load_prefs can report an error, but loadPrefs has no error channel of its own since
       // bad/foreign prefs are not something the UI needs to act on: log it so it isn't silent.
       val error = midend.loadPrefs(me, bytes)
@@ -718,7 +761,7 @@ class PuzzleSession internal constructor(
    * unaffected.
    */
   suspend fun applyPrefDefaults() =
-    engineThread.run {
+    onEngine {
       val (cfg, _) = midend.getConfig(me, ConfigSection.PREFS)
       try {
         var changed = false
@@ -786,11 +829,11 @@ class PuzzleSession internal constructor(
    *   game clock with nothing else moving) from a genuinely animating one.
    */
   suspend fun tick(): Boolean =
-    engineThread.run {
-      if (!hasGame) return@run false
+    onEngine {
+      if (!hasGame) return@onEngine false
       val delta =
         synchronized(timerLock) {
-          if (!timerWanted || paused) return@run false
+          if (!timerWanted || paused) return@onEngine false
           val now = System.nanoTime()
           ((now - timerStartNanos) / 1_000_000_000f).also { timerStartNanos = now }
         }
@@ -839,10 +882,12 @@ class PuzzleSession internal constructor(
     try {
       runBlocking(engineThread.dispatcher) {
         hasGame = false
-        if (hooks.drawingSink === sink) hooks.drawingSink = null
-        hooks.onActivateTimer = null
-        hooks.onDeactivateTimer = null
-        hooks.onIdsChanged = null
+        if (hooks.drawingSink === sink) {
+          hooks.drawingSink = null
+          hooks.onActivateTimer = null
+          hooks.onDeactivateTimer = null
+          hooks.onIdsChanged = null
+        }
         midend.midendFree(me)
       }
     } catch (e: CancellationException) {
