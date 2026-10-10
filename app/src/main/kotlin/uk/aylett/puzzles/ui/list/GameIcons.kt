@@ -63,7 +63,8 @@ private val gameIconsByName: Map<String, Int> =
     "Solo" to R.drawable.ic_game_solo,
     "Tents" to R.drawable.ic_game_tents,
     "Towers" to R.drawable.ic_game_towers,
-    "Tracks" to R.drawable.ic_game_tracks,
+    // tracks.c is displayed as "Train Tracks" but its icon file is plain "tracks-96d24.png".
+    "Train Tracks" to R.drawable.ic_game_tracks,
     "Twiddle" to R.drawable.ic_game_twiddle,
     "Undead" to R.drawable.ic_game_undead,
     "Unequal" to R.drawable.ic_game_unequal,

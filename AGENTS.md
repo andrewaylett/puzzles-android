@@ -447,7 +447,12 @@ They map from `GameInfo.name` (the mid-end's display name) via `GameIcons.kt`, k
 because the mid-end exposes no internal slug — most names differ from their icon filename only in
 case and spacing, except `rect`, whose icon keeps the historical short name despite the game's
 display name being "Rectangles". Two games added after that icon set was last regenerated upstream
-— Mosaic and Palisade — have no matching file and fall back to a generic icon.
+— Mosaic and Palisade — have no matching file and show no icon. Beware names that differ from the
+game's own: tracks.c is displayed as "Train Tracks", and a mismatched key fails silently as "no icon".
+
+The launcher icon uses the montage directly as the adaptive foreground, full-bleed: it is a square
+with its own tile edges, so shrinking it into the safe zone left it floating in the grey background.
+Launchers mask away the outer third, so only the middle of the montage is ever visible.
 
 The three Undead key icons (`ic_key_ghost.xml`, `ic_key_vampire.xml`, `ic_key_zombie.xml`) are
 original vector artwork, not vendored — they're redrawn from the shapes and colours visible in the

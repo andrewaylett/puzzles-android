@@ -51,6 +51,11 @@ class GameListTest {
   }
 
   @Test
+  fun trainTracksIsKeyedByItsDisplayName() {
+    assertNotNull(iconFor("Train Tracks"))
+  }
+
+  @Test
   fun gamesAddedAfterTheIconSetHaveNoIcon() {
     assertNull(iconFor("Mosaic"))
     assertNull(iconFor("Palisade"))

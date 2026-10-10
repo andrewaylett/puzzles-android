@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
   Used only for the themed/monochrome launcher icon (Android 13+), which must be a single-colour
-  silhouette — the upstream collection's own icon (see ic_launcher_foreground.xml) is a full-colour
+  silhouette — the upstream collection's own icon (see puzzles_icon_montage.png) is a full-colour
   raster montage and can't serve that purpose. This is a 3x3 grid with a few filled cells: the
   motif shared by most of the collection's puzzles, and legible at launcher size in a way a
   specific puzzle's artwork would not be.
