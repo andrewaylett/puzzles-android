@@ -15,6 +15,7 @@
  */
 package uk.aylett.puzzles.engine
 
+import com.dylibso.chicory.runtime.ExportFunction
 import com.dylibso.chicory.runtime.Instance
 
 /**
@@ -34,47 +35,159 @@ import com.dylibso.chicory.runtime.Instance
 class WasmMidend(
   private val instance: Instance,
 ) {
+  /**
+   * Every export used, resolved once when the instance is wrapped rather than by name on each call.
+   * Lookups are hash probes, but this sits on the input/redraw path, and resolving up front also
+   * means a module missing an export fails at start-up instead of on the first call that needs it.
+   */
+  private class Exports(
+    instance: Instance,
+  ) {
+    val malloc: ExportFunction = instance.export("malloc")
+    val free: ExportFunction = instance.export("free")
+    val freeCfg: ExportFunction = instance.export("free_cfg")
+    val freeKeys: ExportFunction = instance.export("free_keys")
+    val wasmmidGameCount: ExportFunction = instance.export("wasmmid_game_count")
+    val wasmmidGameAt: ExportFunction = instance.export("wasmmid_game_at")
+    val wasmmidGameName: ExportFunction = instance.export("wasmmid_game_name")
+    val wasmmidGameCanSolve: ExportFunction = instance.export("wasmmid_game_can_solve")
+    val wasmmidGameCanConfigure: ExportFunction = instance.export("wasmmid_game_can_configure")
+    val wasmmidGameCanFormatAsTextEver: ExportFunction =
+      instance.export(
+        "wasmmid_game_can_format_as_text_ever",
+      )
+    val wasmmidMidendNew: ExportFunction = instance.export("wasmmid_midend_new")
+    val midendFree: ExportFunction = instance.export("midend_free")
+    val midendNewGame: ExportFunction = instance.export("midend_new_game")
+    val midendRestartGame: ExportFunction = instance.export("midend_restart_game")
+    val midendStopAnim: ExportFunction = instance.export("midend_stop_anim")
+    val wasmmidMidendRequestIdChanges: ExportFunction =
+      instance.export(
+        "wasmmid_midend_request_id_changes",
+      )
+    val midendWhichGame: ExportFunction = instance.export("midend_which_game")
+    val midendSetParams: ExportFunction = instance.export("midend_set_params")
+    val midendGetParams: ExportFunction = instance.export("midend_get_params")
+    val midendSize: ExportFunction = instance.export("midend_size")
+    val midendResetTilesize: ExportFunction = instance.export("midend_reset_tilesize")
+    val midendTilesize: ExportFunction = instance.export("midend_tilesize")
+    val midendProcessKey: ExportFunction = instance.export("midend_process_key")
+    val midendForceRedraw: ExportFunction = instance.export("midend_force_redraw")
+    val midendRedraw: ExportFunction = instance.export("midend_redraw")
+    val midendTimer: ExportFunction = instance.export("midend_timer")
+    val midendFreezeTimer: ExportFunction = instance.export("midend_freeze_timer")
+    val midendColours: ExportFunction = instance.export("midend_colours")
+    val midendWantsStatusbar: ExportFunction = instance.export("midend_wants_statusbar")
+    val midendStatus: ExportFunction = instance.export("midend_status")
+    val midendCanUndo: ExportFunction = instance.export("midend_can_undo")
+    val midendCanRedo: ExportFunction = instance.export("midend_can_redo")
+    val midendGetCursorLocation: ExportFunction = instance.export("midend_get_cursor_location")
+    val midendGameId: ExportFunction = instance.export("midend_game_id")
+    val midendGetGameId: ExportFunction = instance.export("midend_get_game_id")
+    val midendGetRandomSeed: ExportFunction = instance.export("midend_get_random_seed")
+    val midendSupersedeGameDesc: ExportFunction = instance.export("midend_supersede_game_desc")
+    val midendCanFormatAsTextNow: ExportFunction = instance.export("midend_can_format_as_text_now")
+    val midendTextFormat: ExportFunction = instance.export("midend_text_format")
+    val midendSolve: ExportFunction = instance.export("midend_solve")
+    val midendRewriteStatusbar: ExportFunction = instance.export("midend_rewrite_statusbar")
+    val midendGetPresets: ExportFunction = instance.export("midend_get_presets")
+    val wasmmidPresetMenuNentries: ExportFunction = instance.export("wasmmid_preset_menu_nentries")
+    val wasmmidPresetMenuEntryTitle: ExportFunction =
+      instance.export(
+        "wasmmid_preset_menu_entry_title",
+      )
+    val wasmmidPresetMenuEntryId: ExportFunction = instance.export("wasmmid_preset_menu_entry_id")
+    val wasmmidPresetMenuEntrySubmenu: ExportFunction =
+      instance.export(
+        "wasmmid_preset_menu_entry_submenu",
+      )
+    val wasmmidPresetMenuEntryParams: ExportFunction =
+      instance.export(
+        "wasmmid_preset_menu_entry_params",
+      )
+    val presetMenuLookupById: ExportFunction = instance.export("preset_menu_lookup_by_id")
+    val midendWhichPreset: ExportFunction = instance.export("midend_which_preset")
+    val midendGetConfig: ExportFunction = instance.export("midend_get_config")
+    val wasmmidConfigItemType: ExportFunction = instance.export("wasmmid_config_item_type")
+    val wasmmidConfigItemName: ExportFunction = instance.export("wasmmid_config_item_name")
+    val wasmmidConfigItemKw: ExportFunction = instance.export("wasmmid_config_item_kw")
+    val wasmmidConfigItemStringValue: ExportFunction =
+      instance.export(
+        "wasmmid_config_item_string_value",
+      )
+    val wasmmidConfigItemSetString: ExportFunction =
+      instance.export(
+        "wasmmid_config_item_set_string",
+      )
+    val wasmmidConfigItemBoolValue: ExportFunction =
+      instance.export(
+        "wasmmid_config_item_bool_value",
+      )
+    val wasmmidConfigItemSetBool: ExportFunction = instance.export("wasmmid_config_item_set_bool")
+    val wasmmidConfigItemChoices: ExportFunction = instance.export("wasmmid_config_item_choices")
+    val wasmmidConfigItemChoiceSelected: ExportFunction =
+      instance.export(
+        "wasmmid_config_item_choice_selected",
+      )
+    val wasmmidConfigItemSetChoice: ExportFunction =
+      instance.export(
+        "wasmmid_config_item_set_choice",
+      )
+    val midendSetConfig: ExportFunction = instance.export("midend_set_config")
+    val midendRequestKeys: ExportFunction = instance.export("midend_request_keys")
+    val wasmmidKeyLabelText: ExportFunction = instance.export("wasmmid_key_label_text")
+    val wasmmidKeyLabelButton: ExportFunction = instance.export("wasmmid_key_label_button")
+    val midendCurrentKeyLabel: ExportFunction = instance.export("midend_current_key_label")
+    val wasmmidSerialise: ExportFunction = instance.export("wasmmid_serialise")
+    val wasmmidDeserialise: ExportFunction = instance.export("wasmmid_deserialise")
+    val wasmmidSavePrefs: ExportFunction = instance.export("wasmmid_save_prefs")
+    val wasmmidLoadPrefs: ExportFunction = instance.export("wasmmid_load_prefs")
+    val wasmmidIdentifyGame: ExportFunction = instance.export("wasmmid_identify_game")
+  }
+
+  private val exports = Exports(instance)
+
   private fun memory() = instance.memory()
 
   private fun call(
-    name: String,
+    fn: ExportFunction,
     vararg args: Long,
-  ): LongArray? = instance.export(name).apply(*args)
+  ): LongArray? = fn.apply(*args)
 
   private fun call0(
-    name: String,
+    fn: ExportFunction,
     vararg args: Long,
   ) {
-    call(name, *args)
+    call(fn, *args)
   }
 
   private fun call1(
-    name: String,
+    fn: ExportFunction,
     vararg args: Long,
-  ): Int = call(name, *args)!![0].toInt()
+  ): Int = call(fn, *args)!![0].toInt()
 
   private fun callBool(
-    name: String,
+    fn: ExportFunction,
     vararg args: Long,
-  ): Boolean = call1(name, *args) != 0
+  ): Boolean = call1(fn, *args) != 0
 
   // ---- Allocation -----------------------------------------------------------------------------
 
-  fun malloc(size: Int): Int = call1("malloc", size.toLong())
+  fun malloc(size: Int): Int = call1(exports.malloc, size.toLong())
 
   fun free(ptr: Int) {
-    if (ptr != 0) call0("free", ptr.toLong())
+    if (ptr != 0) call0(exports.free, ptr.toLong())
   }
 
   fun freeCfg(ptr: Int) {
-    if (ptr != 0) call0("free_cfg", ptr.toLong())
+    if (ptr != 0) call0(exports.freeCfg, ptr.toLong())
   }
 
   fun freeKeys(
     ptr: Int,
     n: Int,
   ) {
-    if (ptr != 0) call0("free_keys", ptr.toLong(), n.toLong())
+    if (ptr != 0) call0(exports.freeKeys, ptr.toLong(), n.toLong())
   }
 
   /** Reads a NUL-terminated string without taking ownership of [ptr]. */
@@ -132,43 +245,44 @@ class WasmMidend(
 
   // ---- Game listing (combined module only) -----------------------------------------------------
 
-  fun gameCount(): Int = call1("wasmmid_game_count")
+  fun gameCount(): Int = call1(exports.wasmmidGameCount)
 
-  fun gameAt(index: Int): Int = call1("wasmmid_game_at", index.toLong())
+  fun gameAt(index: Int): Int = call1(exports.wasmmidGameAt, index.toLong())
 
-  fun gameName(game: Int): String = readCString(call1("wasmmid_game_name", game.toLong()))
+  fun gameName(game: Int): String = readCString(call1(exports.wasmmidGameName, game.toLong()))
 
-  fun gameCanSolve(game: Int): Boolean = callBool("wasmmid_game_can_solve", game.toLong())
+  fun gameCanSolve(game: Int): Boolean = callBool(exports.wasmmidGameCanSolve, game.toLong())
 
-  fun gameCanConfigure(game: Int): Boolean = callBool("wasmmid_game_can_configure", game.toLong())
+  fun gameCanConfigure(game: Int): Boolean =
+    callBool(exports.wasmmidGameCanConfigure, game.toLong())
 
   fun gameCanFormatAsTextEver(game: Int): Boolean =
-    callBool("wasmmid_game_can_format_as_text_ever", game.toLong())
+    callBool(exports.wasmmidGameCanFormatAsTextEver, game.toLong())
 
   // ---- Lifecycle --------------------------------------------------------------------------------
 
-  fun midendNew(gameIndex: Int): Int = call1("wasmmid_midend_new", gameIndex.toLong())
+  fun midendNew(gameIndex: Int): Int = call1(exports.wasmmidMidendNew, gameIndex.toLong())
 
-  fun midendFree(me: Int) = call0("midend_free", me.toLong())
+  fun midendFree(me: Int) = call0(exports.midendFree, me.toLong())
 
-  fun newGame(me: Int) = call0("midend_new_game", me.toLong())
+  fun newGame(me: Int) = call0(exports.midendNewGame, me.toLong())
 
-  fun restartGame(me: Int) = call0("midend_restart_game", me.toLong())
+  fun restartGame(me: Int) = call0(exports.midendRestartGame, me.toLong())
 
-  fun stopAnim(me: Int) = call0("midend_stop_anim", me.toLong())
+  fun stopAnim(me: Int) = call0(exports.midendStopAnim, me.toLong())
 
-  fun requestIdChanges(me: Int) = call0("wasmmid_midend_request_id_changes", me.toLong())
+  fun requestIdChanges(me: Int) = call0(exports.wasmmidMidendRequestIdChanges, me.toLong())
 
-  fun whichGame(me: Int): Int = call1("midend_which_game", me.toLong())
+  fun whichGame(me: Int): Int = call1(exports.midendWhichGame, me.toLong())
 
   // ---- Params -------------------------------------------------------------------------------
 
   fun setParams(
     me: Int,
     params: Int,
-  ) = call0("midend_set_params", me.toLong(), params.toLong())
+  ) = call0(exports.midendSetParams, me.toLong(), params.toLong())
 
-  fun getParams(me: Int): Int = call1("midend_get_params", me.toLong())
+  fun getParams(me: Int): Int = call1(exports.midendGetParams, me.toLong())
 
   /**
    * Sizes the game to fit [width]x[height] units, returning the size the mid-end will actually
@@ -197,7 +311,7 @@ class WasmMidend(
       memory().writeI32(xPtr, width)
       memory().writeI32(yPtr, height)
       call(
-        "midend_size",
+        exports.midendSize,
         me.toLong(),
         xPtr.toLong(),
         yPtr.toLong(),
@@ -207,9 +321,9 @@ class WasmMidend(
       memory().readInt(xPtr) to memory().readInt(yPtr)
     }
 
-  fun resetTilesize(me: Int) = call0("midend_reset_tilesize", me.toLong())
+  fun resetTilesize(me: Int) = call0(exports.midendResetTilesize, me.toLong())
 
-  fun tilesize(me: Int): Int = call1("midend_tilesize", me.toLong())
+  fun tilesize(me: Int): Int = call1(exports.midendTilesize, me.toLong())
 
   // ---- Input and redraw -----------------------------------------------------------------------
 
@@ -219,18 +333,18 @@ class WasmMidend(
     x: Int,
     y: Int,
     button: Int,
-  ): Int = call1("midend_process_key", me.toLong(), x.toLong(), y.toLong(), button.toLong())
+  ): Int = call1(exports.midendProcessKey, me.toLong(), x.toLong(), y.toLong(), button.toLong())
 
-  fun forceRedraw(me: Int) = call0("midend_force_redraw", me.toLong())
+  fun forceRedraw(me: Int) = call0(exports.midendForceRedraw, me.toLong())
 
-  fun redraw(me: Int) = call0("midend_redraw", me.toLong())
+  fun redraw(me: Int) = call0(exports.midendRedraw, me.toLong())
 
   /** @param elapsedSeconds real time since the timer was activated, as raw `float` bits. */
   fun timer(
     me: Int,
     elapsedSeconds: Float,
   ) = call0(
-    "midend_timer",
+    exports.midendTimer,
     me.toLong(),
     java.lang.Float
       .floatToRawIntBits(elapsedSeconds)
@@ -241,7 +355,7 @@ class WasmMidend(
     me: Int,
     tplus: Float,
   ) = call0(
-    "midend_freeze_timer",
+    exports.midendFreezeTimer,
     me.toLong(),
     java.lang.Float
       .floatToRawIntBits(tplus)
@@ -251,18 +365,18 @@ class WasmMidend(
   /** @return RGB triples, `ncolours * 3` floats long. */
   fun colours(me: Int): FloatArray =
     withIntScratch(1) { nPtr ->
-      val colours = call1("midend_colours", me.toLong(), nPtr.toLong())
+      val colours = call1(exports.midendColours, me.toLong(), nPtr.toLong())
       val n = memory().readInt(nPtr)
       FloatArray(n * 3) { i -> memory().readFloat(colours + i * 4) }
     }
 
-  fun wantsStatusbar(me: Int): Boolean = callBool("midend_wants_statusbar", me.toLong())
+  fun wantsStatusbar(me: Int): Boolean = callBool(exports.midendWantsStatusbar, me.toLong())
 
-  fun status(me: Int): Int = call1("midend_status", me.toLong())
+  fun status(me: Int): Int = call1(exports.midendStatus, me.toLong())
 
-  fun canUndo(me: Int): Boolean = callBool("midend_can_undo", me.toLong())
+  fun canUndo(me: Int): Boolean = callBool(exports.midendCanUndo, me.toLong())
 
-  fun canRedo(me: Int): Boolean = callBool("midend_can_redo", me.toLong())
+  fun canRedo(me: Int): Boolean = callBool(exports.midendCanRedo, me.toLong())
 
   fun getCursorLocation(me: Int): IntArray? =
     withIntScratch(4) { scratch ->
@@ -272,7 +386,7 @@ class WasmMidend(
       val hPtr = scratch + 12
       val found =
         call1(
-          "midend_get_cursor_location",
+          exports.midendGetCursorLocation,
           me.toLong(),
           xPtr.toLong(),
           yPtr.toLong(),
@@ -300,16 +414,17 @@ class WasmMidend(
   ): String? {
     val idPtr = writeCString(id)
     try {
-      return readBorrowedCString(call1("midend_game_id", me.toLong(), idPtr.toLong()))
+      return readBorrowedCString(call1(exports.midendGameId, me.toLong(), idPtr.toLong()))
     } finally {
       free(idPtr)
     }
   }
 
-  fun getGameId(me: Int): String = readOwnedCString(call1("midend_get_game_id", me.toLong())) ?: ""
+  fun getGameId(me: Int): String =
+    readOwnedCString(call1(exports.midendGetGameId, me.toLong())) ?: ""
 
   fun getRandomSeed(me: Int): String? =
-    readOwnedCString(call1("midend_get_random_seed", me.toLong()))
+    readOwnedCString(call1(exports.midendGetRandomSeed, me.toLong()))
 
   fun supersedeGameDesc(
     me: Int,
@@ -319,19 +434,19 @@ class WasmMidend(
     val descPtr = writeCString(desc)
     val seedPtr = if (seed != null) writeCString(seed) else 0
     try {
-      call0("midend_supersede_game_desc", me.toLong(), descPtr.toLong(), seedPtr.toLong())
+      call0(exports.midendSupersedeGameDesc, me.toLong(), descPtr.toLong(), seedPtr.toLong())
     } finally {
       free(descPtr)
       free(seedPtr)
     }
   }
 
-  fun canFormatAsTextNow(me: Int): Boolean = callBool("midend_can_format_as_text_now", me.toLong())
+  fun canFormatAsTextNow(me: Int): Boolean = callBool(exports.midendCanFormatAsTextNow, me.toLong())
 
-  fun textFormat(me: Int): String? = readOwnedCString(call1("midend_text_format", me.toLong()))
+  fun textFormat(me: Int): String? = readOwnedCString(call1(exports.midendTextFormat, me.toLong()))
 
   /** @return an error message, or null on success. */
-  fun solve(me: Int): String? = readBorrowedCString(call1("midend_solve", me.toLong()))
+  fun solve(me: Int): String? = readBorrowedCString(call1(exports.midendSolve, me.toLong()))
 
   fun rewriteStatusbar(
     me: Int,
@@ -339,7 +454,7 @@ class WasmMidend(
   ): String {
     val textPtr = writeCString(text)
     try {
-      return readOwnedCString(call1("midend_rewrite_statusbar", me.toLong(), textPtr.toLong()))
+      return readOwnedCString(call1(exports.midendRewriteStatusbar, me.toLong(), textPtr.toLong()))
         ?: text
     } finally {
       free(textPtr)
@@ -352,38 +467,38 @@ class WasmMidend(
   fun getPresets(me: Int): Int =
     withIntScratch(
       1,
-    ) { idLimitPtr -> call1("midend_get_presets", me.toLong(), idLimitPtr.toLong()) }
+    ) { idLimitPtr -> call1(exports.midendGetPresets, me.toLong(), idLimitPtr.toLong()) }
 
-  fun presetMenuNEntries(menu: Int): Int = call1("wasmmid_preset_menu_nentries", menu.toLong())
+  fun presetMenuNEntries(menu: Int): Int = call1(exports.wasmmidPresetMenuNentries, menu.toLong())
 
   fun presetMenuEntryTitle(
     menu: Int,
     i: Int,
-  ): String = readCString(call1("wasmmid_preset_menu_entry_title", menu.toLong(), i.toLong()))
+  ): String = readCString(call1(exports.wasmmidPresetMenuEntryTitle, menu.toLong(), i.toLong()))
 
   fun presetMenuEntryId(
     menu: Int,
     i: Int,
-  ): Int = call1("wasmmid_preset_menu_entry_id", menu.toLong(), i.toLong())
+  ): Int = call1(exports.wasmmidPresetMenuEntryId, menu.toLong(), i.toLong())
 
   /** @return a nested `preset_menu *`, or 0 if entry [i] is a leaf. */
   fun presetMenuEntrySubmenu(
     menu: Int,
     i: Int,
-  ): Int = call1("wasmmid_preset_menu_entry_submenu", menu.toLong(), i.toLong())
+  ): Int = call1(exports.wasmmidPresetMenuEntrySubmenu, menu.toLong(), i.toLong())
 
   fun presetMenuEntryParams(
     menu: Int,
     i: Int,
-  ): Int = call1("wasmmid_preset_menu_entry_params", menu.toLong(), i.toLong())
+  ): Int = call1(exports.wasmmidPresetMenuEntryParams, menu.toLong(), i.toLong())
 
   fun presetMenuLookupById(
     menu: Int,
     id: Int,
-  ): Int = call1("preset_menu_lookup_by_id", menu.toLong(), id.toLong())
+  ): Int = call1(exports.presetMenuLookupById, menu.toLong(), id.toLong())
 
   /** @return the active preset's id, or -1 if the current params don't match any preset. */
-  fun whichPreset(me: Int): Int = call1("midend_which_preset", me.toLong())
+  fun whichPreset(me: Int): Int = call1(exports.midendWhichPreset, me.toLong())
 
   // ---- Config (pull model) ---------------------------------------------------------------------
 
@@ -393,7 +508,7 @@ class WasmMidend(
     which: Int,
   ): Pair<Int, String> =
     withIntScratch(1) { titlePtr ->
-      val cfg = call1("midend_get_config", me.toLong(), which.toLong(), titlePtr.toLong())
+      val cfg = call1(exports.midendGetConfig, me.toLong(), which.toLong(), titlePtr.toLong())
       // The title string is owned by the mid-end's own state, not a fresh allocation: read only.
       cfg to readCString(memory().readInt(titlePtr))
     }
@@ -401,22 +516,22 @@ class WasmMidend(
   fun configItemType(
     cfg: Int,
     i: Int,
-  ): Int = call1("wasmmid_config_item_type", cfg.toLong(), i.toLong())
+  ): Int = call1(exports.wasmmidConfigItemType, cfg.toLong(), i.toLong())
 
   fun configItemName(
     cfg: Int,
     i: Int,
-  ): String = readCString(call1("wasmmid_config_item_name", cfg.toLong(), i.toLong()))
+  ): String = readCString(call1(exports.wasmmidConfigItemName, cfg.toLong(), i.toLong()))
 
   fun configItemKw(
     cfg: Int,
     i: Int,
-  ): String = readCString(call1("wasmmid_config_item_kw", cfg.toLong(), i.toLong()))
+  ): String = readCString(call1(exports.wasmmidConfigItemKw, cfg.toLong(), i.toLong()))
 
   fun configItemStringValue(
     cfg: Int,
     i: Int,
-  ): String = readCString(call1("wasmmid_config_item_string_value", cfg.toLong(), i.toLong()))
+  ): String = readCString(call1(exports.wasmmidConfigItemStringValue, cfg.toLong(), i.toLong()))
 
   fun configItemSetString(
     cfg: Int,
@@ -425,7 +540,7 @@ class WasmMidend(
   ) {
     val valuePtr = writeCString(value)
     try {
-      call0("wasmmid_config_item_set_string", cfg.toLong(), i.toLong(), valuePtr.toLong())
+      call0(exports.wasmmidConfigItemSetString, cfg.toLong(), i.toLong(), valuePtr.toLong())
     } finally {
       free(valuePtr)
     }
@@ -434,30 +549,30 @@ class WasmMidend(
   fun configItemBoolValue(
     cfg: Int,
     i: Int,
-  ): Boolean = callBool("wasmmid_config_item_bool_value", cfg.toLong(), i.toLong())
+  ): Boolean = callBool(exports.wasmmidConfigItemBoolValue, cfg.toLong(), i.toLong())
 
   fun configItemSetBool(
     cfg: Int,
     i: Int,
     value: Boolean,
-  ) = call0("wasmmid_config_item_set_bool", cfg.toLong(), i.toLong(), if (value) 1L else 0L)
+  ) = call0(exports.wasmmidConfigItemSetBool, cfg.toLong(), i.toLong(), if (value) 1L else 0L)
 
   /** @return the raw delimited string, e.g. `":Foo:Bar:Baz"`, split on its first char. */
   fun configItemChoices(
     cfg: Int,
     i: Int,
-  ): String = readCString(call1("wasmmid_config_item_choices", cfg.toLong(), i.toLong()))
+  ): String = readCString(call1(exports.wasmmidConfigItemChoices, cfg.toLong(), i.toLong()))
 
   fun configItemChoiceSelected(
     cfg: Int,
     i: Int,
-  ): Int = call1("wasmmid_config_item_choice_selected", cfg.toLong(), i.toLong())
+  ): Int = call1(exports.wasmmidConfigItemChoiceSelected, cfg.toLong(), i.toLong())
 
   fun configItemSetChoice(
     cfg: Int,
     i: Int,
     index: Int,
-  ) = call0("wasmmid_config_item_set_choice", cfg.toLong(), i.toLong(), index.toLong())
+  ) = call0(exports.wasmmidConfigItemSetChoice, cfg.toLong(), i.toLong(), index.toLong())
 
   /** @return an error message, or null on success. */
   fun setConfig(
@@ -466,14 +581,14 @@ class WasmMidend(
     cfg: Int,
   ): String? =
     // A `const char *` static literal, so it must not be freed (see AGENTS.md).
-    readBorrowedCString(call1("midend_set_config", me.toLong(), which.toLong(), cfg.toLong()))
+    readBorrowedCString(call1(exports.midendSetConfig, me.toLong(), which.toLong(), cfg.toLong()))
 
   // ---- Keys ---------------------------------------------------------------------------------
 
   /** @return the `key_label *` and its length. */
   fun requestKeys(me: Int): Pair<Int, Int> =
     withIntScratch(1) { nPtr ->
-      val keys = call1("midend_request_keys", me.toLong(), nPtr.toLong())
+      val keys = call1(exports.midendRequestKeys, me.toLong(), nPtr.toLong())
       keys to memory().readInt(nPtr)
     }
 
@@ -482,25 +597,25 @@ class WasmMidend(
     keys: Int,
     i: Int,
   ): String? {
-    val ptr = call1("wasmmid_key_label_text", keys.toLong(), i.toLong())
+    val ptr = call1(exports.wasmmidKeyLabelText, keys.toLong(), i.toLong())
     return if (ptr == 0) null else readCString(ptr)
   }
 
   fun keyLabelButton(
     keys: Int,
     i: Int,
-  ): Int = call1("wasmmid_key_label_button", keys.toLong(), i.toLong())
+  ): Int = call1(exports.wasmmidKeyLabelButton, keys.toLong(), i.toLong())
 
   fun currentKeyLabel(
     me: Int,
     button: Int,
-  ): String = readCString(call1("midend_current_key_label", me.toLong(), button.toLong()))
+  ): String = readCString(call1(exports.midendCurrentKeyLabel, me.toLong(), button.toLong()))
 
   // ---- Save/load and preferences ----------------------------------------------------------------
 
   fun serialise(me: Int): ByteArray =
     withIntScratch(1) { outlenPtr ->
-      val ptr = call1("wasmmid_serialise", me.toLong(), outlenPtr.toLong())
+      val ptr = call1(exports.wasmmidSerialise, me.toLong(), outlenPtr.toLong())
       val len = memory().readInt(outlenPtr)
       try {
         memory().readBytes(ptr, len)
@@ -518,7 +633,7 @@ class WasmMidend(
     try {
       memory().write(bufPtr, bytes)
       return readBorrowedCString(
-        call1("wasmmid_deserialise", me.toLong(), bufPtr.toLong(), bytes.size.toLong()),
+        call1(exports.wasmmidDeserialise, me.toLong(), bufPtr.toLong(), bytes.size.toLong()),
       )
     } finally {
       free(bufPtr)
@@ -527,7 +642,7 @@ class WasmMidend(
 
   fun savePrefs(me: Int): ByteArray =
     withIntScratch(1) { outlenPtr ->
-      val ptr = call1("wasmmid_save_prefs", me.toLong(), outlenPtr.toLong())
+      val ptr = call1(exports.wasmmidSavePrefs, me.toLong(), outlenPtr.toLong())
       val len = memory().readInt(outlenPtr)
       try {
         memory().readBytes(ptr, len)
@@ -545,7 +660,7 @@ class WasmMidend(
     try {
       memory().write(bufPtr, bytes)
       return readBorrowedCString(
-        call1("wasmmid_load_prefs", me.toLong(), bufPtr.toLong(), bytes.size.toLong()),
+        call1(exports.wasmmidLoadPrefs, me.toLong(), bufPtr.toLong(), bytes.size.toLong()),
       )
     } finally {
       free(bufPtr)
@@ -559,7 +674,12 @@ class WasmMidend(
       try {
         memory().write(bufPtr, bytes)
         val error =
-          call1("wasmmid_identify_game", namePtrPtr.toLong(), bufPtr.toLong(), bytes.size.toLong())
+          call1(
+            exports.wasmmidIdentifyGame,
+            namePtrPtr.toLong(),
+            bufPtr.toLong(),
+            bytes.size.toLong(),
+          )
         val namePtr = memory().readInt(namePtrPtr)
         val name = readOwnedCString(namePtr)
         // The error is a static string; only *name was allocated for us.
