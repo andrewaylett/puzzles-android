@@ -19,8 +19,10 @@ import io.mockk.coVerify
 import io.mockk.every
 import io.mockk.mockk
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.test.StandardTestDispatcher
@@ -56,7 +58,7 @@ class GameListViewModelTest {
 
       override suspend fun discardEngine(failed: PuzzleEngine) = Unit
 
-      override fun registerUnloadSaver(saver: suspend () -> Unit) = AutoCloseable {}
+      override val applicationScope = CoroutineScope(SupervisorJob())
     }
 
   private val favourites = MutableStateFlow(emptySet<String>())

@@ -30,7 +30,6 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import uk.aylett.puzzles.engine.PuzzleEngine
-import java.util.concurrent.CopyOnWriteArraySet
 
 /**
  * What a ViewModel needs from the process-wide engine owner. An interface so that ViewModels can
@@ -43,12 +42,10 @@ interface EngineProvider {
   suspend fun engine(): PuzzleEngine
 
   /**
-   * Registers [saver] to be run, and awaited, whenever the engine is about to be unloaded because
-   * the app is no longer visible, while it is still open. Whatever a screen has not yet saved is
-   * lost with the engine, so this is the last chance to write it down. Close the result to
-   * unregister.
+   * A scope that outlives every screen. Work that must finish even if the screen that asked for it
+   * is destroyed — writing a save, chiefly — belongs here rather than in a ViewModel's scope.
    */
-  fun registerUnloadSaver(saver: suspend () -> Unit): AutoCloseable
+  val applicationScope: CoroutineScope
 
   /**
    * Throws away [failed] after it broke (see [uk.aylett.puzzles.engine.EngineFailure]); the next
@@ -69,7 +66,7 @@ interface EngineProvider {
 class PuzzlesApplication :
   Application(),
   EngineProvider {
-  val applicationScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+  override val applicationScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
   private val engineMutex = Mutex()
   private var engineDeferred: Deferred<PuzzleEngine>? = null
@@ -80,13 +77,6 @@ class PuzzlesApplication :
   // actually needs the engine again (GameViewModel.onResume), not eagerly here.
   private val _engineInvalidated = MutableSharedFlow<Unit>(extraBufferCapacity = 1)
   override val engineInvalidated: SharedFlow<Unit> = _engineInvalidated.asSharedFlow()
-
-  private val unloadSavers = CopyOnWriteArraySet<suspend () -> Unit>()
-
-  override fun registerUnloadSaver(saver: suspend () -> Unit): AutoCloseable {
-    unloadSavers += saver
-    return AutoCloseable { unloadSavers -= saver }
-  }
 
   /**
    * Returns the process's [PuzzleEngine], creating it lazily on first use or after
@@ -124,10 +114,10 @@ class PuzzlesApplication :
    * Discards the WASM instance and its dedicated thread once no activity of ours is visible.
    *
    * [ComponentCallbacks2.TRIM_MEMORY_UI_HIDDEN] only fires once every activity has stopped, and
-   * every [uk.aylett.puzzles.ui.game.GameViewModel] persists its session's state in `onPause`,
-   * which always runs before that. Play can still have happened since the last pause, though, so
-   * the registered [registerUnloadSaver] savers are awaited first. After that the engine (a few MB of WASM linear memory plus a parked thread) is pure waste to keep
-   * around while backgrounded. [engine] rebuilds it the next time a screen actually needs it.
+   * every [uk.aylett.puzzles.ui.game.GameViewModel] flushes its save in `onPause`, which always
+   * runs before that, having saved every change since as it happened. So nothing is left to write
+   * by the time the engine goes, and it (a few MB of WASM linear memory plus a parked thread) is
+   * pure waste to keep around while backgrounded. [engine] rebuilds it the next time a screen actually needs it.
    *
    * The comparison is `<`, not `!=`: levels are ordered by severity, and the system may report a
    * later one (`TRIM_MEMORY_BACKGROUND` and up) without ever delivering `UI_HIDDEN` itself. Each
@@ -138,17 +128,6 @@ class PuzzlesApplication :
     super.onTrimMemory(level)
     if (level < ComponentCallbacks2.TRIM_MEMORY_UI_HIDDEN) return
     applicationScope.launch {
-      // Before the engine is taken, so that a saver finds it still open.
-      for (saver in unloadSavers) {
-        runCatching { saver() }
-          .onFailure {
-            Log.w(
-              "PuzzlesApplication",
-              "Saving before unloading the engine failed",
-              it,
-            )
-          }
-      }
       val stale = engineMutex.withLock { engineDeferred.also { engineDeferred = null } }
       _engineInvalidated.emit(Unit)
       // If creating that engine failed there is nothing to close, and rethrowing here would take

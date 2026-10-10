@@ -25,7 +25,6 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.CreationExtras
-import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.Job
@@ -139,15 +138,24 @@ class GameViewModel(
   // displayed frame, which shows as constant flashing.
   private val openMutex = Mutex()
 
-  // Saving in onPause is not enough on its own: play can continue after the last pause (a share
-  // sheet or the recents screen pauses us, and coming back resumes without pausing again before
-  // the process is trimmed), and the engine is about to go with whatever it holds. The engine
-  // owner waits for this, with the engine still open, before closing it.
-  private val unloadSaver =
-    engines.registerUnloadSaver {
-      // persist() reads state owned by the main thread; the engine owner calls from elsewhere.
-      withContext(Dispatchers.Main.immediate) { persist() }?.join()
-    }
+  // Saves the game as it changes, rather than at lifecycle edges that a swipe away from recents
+  // does not leave time for. See GamePersister for why it lives in the application's scope.
+  private val persister =
+    GamePersister(
+      scope = engines.applicationScope,
+      saves = savedGameStore,
+      prefs = prefsStore,
+      onFailure = { failed, e -> viewModelScope.launch { handleFailure(failed, e, "saving") } },
+      onSerialised = {
+        // The persister runs elsewhere; the state this touches belongs to the main thread.
+        withContext(Dispatchers.Main.immediate) { if (restoreMayConfirm) confirmRestore() }
+      },
+    )
+
+  // Whether serialising the restored game is enough to clear its marker. Not until the game has
+  // been laid out and drawn, or the player is leaving: an autosave a moment after the restore says
+  // nothing about whether drawing it would trap, and the marker exists to catch exactly that.
+  private var restoreMayConfirm = false
 
   init {
     viewModelScope.launch {
@@ -164,7 +172,7 @@ class GameViewModel(
 
     // This ViewModel outlives a trip to the Settings screen, and with it the session. Without
     // pushing changes into the live session, the stale values it still holds would be written
-    // back by persist() on the next pause, silently undoing what Settings just changed.
+    // back by the next save, silently undoing what Settings just changed.
     viewModelScope.launch {
       prefsStore.sharedSettings.collect { stored ->
         session?.takeIf { !it.engineClosed }?.let { s ->
@@ -193,6 +201,7 @@ class GameViewModel(
     animationJob?.cancel()
     animationJob = null
     sessionJob?.cancel()
+    persister.detach()
     session = null
   }
 
@@ -250,12 +259,14 @@ class GameViewModel(
     val session: PuzzleSession
     var restored = false
     var restoreAttempted = false
+    var savedPrefs: ByteArray? = null
     try {
       session = engine.openGame(gameIndex)
       this.session = session
       stage("session published, game not yet restored")
-      val savedPrefs = prefsStore.loadPrefs(name)
-      if (savedPrefs != null) session.loadPrefs(savedPrefs) else session.applyPrefDefaults()
+      savedPrefs = prefsStore.loadPrefs(name)
+      val loadedPrefs = savedPrefs
+      if (loadedPrefs != null) session.loadPrefs(loadedPrefs) else session.applyPrefDefaults()
       overlaySettings(session, prefsStore.sharedSettings.first())
       // A restore only counts if it succeeded; a corrupt or stale save must still leave us able to
       // start a fresh game rather than sitting on an empty session forever.
@@ -286,11 +297,15 @@ class GameViewModel(
     }
     stage("restore settled (restored=$restored)")
     unconfirmedRestore = name.takeIf { restored }
+    restoreMayConfirm = !restored
     // Coming back to a finished puzzle only shows a solved board with nothing left to do, so a won
     // game is treated as nothing to restore: leaving gameStarted false has the sizing collector
     // below generate a fresh one. Lost games stay, as the player may want to undo the mistake.
     gameStarted = restored && session.frames.value.status != GameStatus.WON
     prefsStore.setLastPlayedName(name)
+    // Only now that any restore has settled: before it the session holds no game, or not the
+    // player's, and saving it would replace their save with that.
+    persister.attach(session, name, saved.takeIf { restored }, savedPrefs)
     surface?.let { session.attachSurface(it, surfaceBackground) }
 
     _state.value =
@@ -336,6 +351,7 @@ class GameViewModel(
           pendingSize.filterNotNull().debounce(150).collectLatest { (w, h, density) ->
             guarded(session, "sizing the game", Unit) {
               it.resize(w, h, density)
+              restoreMayConfirm = true
               confirmRestore()
               // A session deliberately opens without a game, so that a saved one can be restored
               // without first paying to generate a throwaway. When there was nothing to restore,
@@ -418,6 +434,8 @@ class GameViewModel(
     val quarantine = unconfirmedRestore != null
     unconfirmedRestore = null
     viewModelScope.launch {
+      // A save still being written would put back the file `recover` is about to set aside.
+      persister.drain()
       if (engine != null && name != null) recover(engine, name, stage, e, quarantine)
       openSession(restore = !quarantine)
     }
@@ -592,7 +610,9 @@ class GameViewModel(
 
   fun onPause() {
     session?.setPaused(true)
-    persist()
+    // The player may be leaving for good, and gets no more chances: do not wait out the debounce.
+    restoreMayConfirm = true
+    persister.flush()
   }
 
   fun onResume() {
@@ -608,47 +628,12 @@ class GameViewModel(
     }
   }
 
-  /**
-   * Saves the current game and prefs. The session and name are captured now, not when the launched
-   * save runs, so a later [dropSession] cannot turn it into a save of nothing. The job is returned
-   * for the caller that must wait for the save to land, namely the engine unload.
-   */
-  private fun persist(): Job? {
-    val session = session
-    val name = gameName
-    if (session == null || name == null) {
-      Log.w(LOG_TAG, "Not saving: no open session (session=$session, game=$name)")
-      return null
-    }
-    // An empty game id means the session has no game yet, so this would be saving nothing.
-    Log.i(LOG_TAG, "Saving $name (frame gameId='${session.frames.value.gameId}')")
-    return viewModelScope.launch {
-      // One engine task, not two: see PuzzleSession.saveState for the race with the engine
-      // being closed once the UI is hidden.
-      val state =
-        try {
-          guarded(session, "saving", null) { it.saveState() }
-        } catch (e: CancellationException) {
-          // A closed engine cancels the task rather than failing it, and inside a launch that is
-          // otherwise silent: the moves since the last save would simply vanish with no trace.
-          Log.w(LOG_TAG, "Save of $name was cancelled; moves since the last save are lost", e)
-          throw e
-        }
-      if (state == null) {
-        Log.w(LOG_TAG, "Save of $name failed in the engine; keeping the previous save")
-        return@launch
-      }
-      savedGameStore.save(name, state.game)
-      prefsStore.savePrefs(name, state.prefs)
-      Log.i(LOG_TAG, "Saved $name (${state.game.size} bytes)")
-      // Serialising a restored game proves it is sound enough to keep, which matters if the player
-      // leaves before the first layout would have confirmed it.
-      confirmRestore()
-    }
-  }
-
   override fun onCleared() {
-    unloadSaver.close()
+    // Queued on the engine thread before close() below queues its own, and that thread runs its
+    // queue in order, so the save sees the game before it is freed.
+    restoreMayConfirm = true
+    persister.flush()
+    persister.detach()
     session?.close()
   }
 

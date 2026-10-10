@@ -16,18 +16,23 @@
 package uk.aylett.puzzles.ui.game
 
 import android.view.Surface
+import io.mockk.clearMocks
 import io.mockk.coEvery
 import io.mockk.coVerify
+import io.mockk.coVerifyOrder
 import io.mockk.every
 import io.mockk.mockk
 import io.mockk.verify
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.TestScope
+import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.runTest
@@ -69,7 +74,6 @@ class GameViewModelTest {
   private val engine = mockk<PuzzleEngine>()
   private val openedSessions = mutableListOf<PuzzleSession>()
   private val discarded = mutableListOf<PuzzleEngine>()
-  private val unloadSavers = mutableListOf<suspend () -> Unit>()
 
   // Consumed by the next session's deserialise, to make a restore fail the way a trap does.
   private var deserialiseFailure: Throwable? = null
@@ -88,10 +92,7 @@ class GameViewModelTest {
         discarded += failed
       }
 
-      override fun registerUnloadSaver(saver: suspend () -> Unit): AutoCloseable {
-        unloadSavers += saver
-        return AutoCloseable { unloadSavers -= saver }
-      }
+      override val applicationScope = CoroutineScope(dispatcher + SupervisorJob())
     }
 
   private val swapSetting = MutableStateFlow(false)
@@ -139,6 +140,7 @@ class GameViewModelTest {
           every { game } returns GameInfo(0, "Test", false, false, false)
           every { frames } returns MutableStateFlow(PuzzleFrame())
           every { animating } returns MutableStateFlow(false)
+          every { revision } returns MutableStateFlow(0L)
           every { engineClosed } answers { engineClosedFlag }
           coEvery { keyHints() } returns emptyList()
           coEvery { config(any()) } returns ConfigForm("Preferences", emptyList())
@@ -275,16 +277,18 @@ class GameViewModelTest {
     }
 
   @Test
-  fun `onPause persists the game and prefs from a single engine call`() =
+  fun `onPause saves the game and prefs from a single engine call`() =
     runTest(dispatcher) {
       engineReady.complete(engine)
       val vm = viewModel()
       advanceUntilIdle()
+      val session = openedSessions.single()
+      // Opening saves once on its own account, which is not what is being tested.
+      clearMocks(session, answers = false)
 
       vm.onPause()
       advanceUntilIdle()
 
-      val session = openedSessions.single()
       coVerify(exactly = 1) { session.saveState() }
       coVerify(exactly = 0) { session.serialise() }
       coVerify(exactly = 0) { session.savePrefs() }
@@ -293,24 +297,53 @@ class GameViewModelTest {
     }
 
   @Test
-  fun `unloading the engine saves the game first, and not once the screen is gone`() =
+  fun `a change to the game is saved after the debounce without any lifecycle event`() =
     runTest(dispatcher) {
+      val revision = MutableStateFlow(0L)
+      val session = sessionWith(revision)
+      coEvery { engine.openGame(any()) } returns session
+      engineReady.complete(engine)
+      viewModel()
+      advanceUntilIdle()
+      clearMocks(saves, answers = false)
+      // Identical bytes are not rewritten, so the change has to be one.
+      coEvery { session.saveState() } returns
+        PuzzleSession.SavedState(byteArrayOf(1), byteArrayOf())
+
+      revision.value = 1
+      advanceTimeBy(AUTOSAVE_DEBOUNCE_MS - 1)
+      coVerify(exactly = 0) { saves.save(any(), any()) }
+
+      advanceTimeBy(2)
+      coVerify(exactly = 1) { saves.save("Test", any()) }
+    }
+
+  @Test
+  fun `clearing the view model flushes the game before the session is closed`() =
+    runTest(dispatcher) {
+      val revision = MutableStateFlow(0L)
+      val session = sessionWith(revision)
+      coEvery { engine.openGame(any()) } returns session
       engineReady.complete(engine)
       val vm = viewModel()
       advanceUntilIdle()
-
-      unloadSavers.single()()
-      advanceUntilIdle()
-
-      val session = openedSessions.single()
-      coVerify(exactly = 1) { session.saveState() }
-      coVerify { saves.save("Test", any()) }
+      clearMocks(saves, answers = false)
+      coEvery { session.saveState() } returns
+        PuzzleSession.SavedState(byteArrayOf(9), byteArrayOf())
 
       vm.javaClass
         .getDeclaredMethod("onCleared")
         .apply { isAccessible = true }
         .invoke(vm)
-      assertTrue(unloadSavers.isEmpty())
+      advanceUntilIdle()
+
+      // The scope the save runs in is the application's, so the view model going away does not
+      // cancel it.
+      coVerifyOrder {
+        session.saveState()
+        session.close()
+      }
+      coVerify(exactly = 1) { saves.save("Test", match { it.contentEquals(byteArrayOf(9)) }) }
     }
 
   @Test
@@ -427,6 +460,7 @@ class GameViewModelTest {
           every { game } returns GameInfo(0, "Test", false, false, false)
           every { this@mockk.frames } returns frames
           every { animating } returns MutableStateFlow(false)
+          every { revision } returns MutableStateFlow(0L)
           coEvery { keyHints() } returnsMany
             listOf(
               listOf(KeyHint("1", '1'.code)),
@@ -452,12 +486,24 @@ class GameViewModelTest {
       coVerify(exactly = 2) { session.keyHints() }
     }
 
+  private fun sessionWith(revision: MutableStateFlow<Long>) =
+    mockk<PuzzleSession>(relaxUnitFun = true) {
+      every { game } returns GameInfo(0, "Test", false, false, false)
+      every { frames } returns MutableStateFlow(PuzzleFrame())
+      every { animating } returns MutableStateFlow(false)
+      every { this@mockk.revision } returns revision
+      coEvery { keyHints() } returns emptyList()
+      coEvery { config(any()) } returns ConfigForm("Preferences", emptyList())
+      coEvery { saveState() } returns PuzzleSession.SavedState(byteArrayOf(), byteArrayOf())
+    }
+
   private fun TestScope.openWithSave(status: Int): PuzzleSession {
     val session =
       mockk<PuzzleSession>(relaxUnitFun = true) {
         every { game } returns GameInfo(0, "Test", false, false, false)
         every { frames } returns MutableStateFlow(PuzzleFrame(status = status))
         every { animating } returns MutableStateFlow(false)
+        every { revision } returns MutableStateFlow(0L)
         coEvery { keyHints() } returns emptyList()
         coEvery { config(any()) } returns ConfigForm("Preferences", emptyList())
         coEvery { deserialise(any()) } returns null
