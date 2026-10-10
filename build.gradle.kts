@@ -6,6 +6,7 @@ plugins {
   alias(libs.plugins.kotlin.serialization) apply false
   alias(libs.plugins.aboutlibraries) apply false
   alias(libs.plugins.spotless)
+  id("eu.aylett.conventions.ide-support") version "0.7.1"
 }
 
 spotless {
