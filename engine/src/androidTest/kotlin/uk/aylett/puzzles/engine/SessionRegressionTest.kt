@@ -21,6 +21,8 @@ import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -105,9 +107,85 @@ class SessionRegressionTest {
           session.resize(600, 600)
           session.newGame()
 
-          val state = session.saveState()
+          val state = session.saveState()!!
           assertArrayEquals(session.serialise(), state.game)
           assertArrayEquals(session.savePrefs(), state.prefs)
+        }
+      }
+    }
+
+  @Test
+  fun saveStateIsNullBeforeAGameExistsAndAfterClose() =
+    runBlocking {
+      PuzzleEngine.create(context).use { engine ->
+        val game = engine.games.first { it.name == "Fifteen" }
+        val session = engine.openGame(game.index)
+        assertNull(session.saveState())
+        session.newGame()
+        assertNotNull(session.saveState())
+        session.close()
+        assertNull(session.saveState())
+      }
+    }
+
+  /** Fifteen is untimed, so its save is a pure function of the moves made. */
+  @Test
+  fun revisionCountsChangesThatAlterTheSave() =
+    runBlocking {
+      PuzzleEngine.create(context).use { engine ->
+        val game = engine.games.first { it.name == "Fifteen" }
+        engine.openGame(game.index).use { session ->
+          session.resize(600, 600)
+          session.newGame()
+          val afterNewGame = session.revision.value
+
+          // Arrow keys into the blank slide a tile, one direction at a time; at least one of the
+          // four is legal wherever the blank is.
+          listOf(Buttons.CURSOR_UP, Buttons.CURSOR_DOWN, Buttons.CURSOR_LEFT, Buttons.CURSOR_RIGHT)
+            .first { key ->
+              session.key(key)
+              session.revision.value > afterNewGame
+            }
+          val afterMove = session.revision.value
+
+          // Nothing was asked of the mid-end that it could act on.
+          session.key(Buttons.UI_REDO)
+          assertEquals(afterMove, session.revision.value)
+
+          session.undo()
+          assertEquals(afterMove + 1, session.revision.value)
+          session.redo()
+          assertEquals(afterMove + 2, session.revision.value)
+
+          // Ticking is not a change.
+          session.tick()
+          assertEquals(afterMove + 2, session.revision.value)
+        }
+      }
+    }
+
+  @Test
+  fun aSaveRoundTripsAfterSeveralMoves() =
+    runBlocking {
+      PuzzleEngine.create(context).use { engine ->
+        val game = engine.games.first { it.name == "Fifteen" }
+        val saved =
+          engine.openGame(game.index).use { session ->
+            session.resize(600, 600)
+            session.newGame()
+            repeat(5) {
+              listOf(
+                Buttons.CURSOR_UP,
+                Buttons.CURSOR_LEFT,
+                Buttons.CURSOR_DOWN,
+                Buttons.CURSOR_RIGHT,
+              ).forEach { session.key(it) }
+            }
+            session.serialise()
+          }
+        engine.openGame(game.index).use { session ->
+          assertNull(session.deserialise(saved))
+          assertArrayEquals(saved, session.serialise())
         }
       }
     }

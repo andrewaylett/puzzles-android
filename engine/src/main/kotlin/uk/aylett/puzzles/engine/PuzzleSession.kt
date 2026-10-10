@@ -32,6 +32,9 @@ import java.util.concurrent.atomic.AtomicReference
 private const val DOMINOSA = "Dominosa"
 private const val LOG_TAG = "PuzzleSession"
 
+/** `PKR_SOME_EFFECT` from `puzzles.h`: the only `midend_process_key` result that changed anything. */
+private const val PKR_SOME_EFFECT = 1
+
 /** Upstream's keyword for the "keep square selected after pencil mark" preference. */
 private const val KEEP_PENCIL_HIGHLIGHT_KW = "pencil-keep-highlight"
 
@@ -122,6 +125,21 @@ class PuzzleSession internal constructor(
    */
   val framesPresented = AtomicLong()
 
+  private val _revision = MutableStateFlow(0L)
+
+  /**
+   * Counts the changes that would make [serialise] differ from what it returned before: moves,
+   * undo and redo, a new or restored game, new parameters or preferences. Ticks never count.
+   *
+   * A counter rather than something derived from [frames], which `StateFlow` deduplicates (`canUndo`
+   * stays true after the first move), so a change that leaves the frame equal would be invisible.
+   * Kept here, next to the mid-end calls that make the changes, so that whoever persists the game
+   * does not have to know about each of the routes in.
+   */
+  val revision: StateFlow<Long> = _revision.asStateFlow()
+
+  private fun changed() = _revision.update { it + 1 }
+
   private fun publish(transform: (PuzzleFrame) -> PuzzleFrame) {
     _frames.update(transform)
   }
@@ -192,6 +210,7 @@ class PuzzleSession internal constructor(
   private fun startNewGame() {
     midend.newGame(me)
     hasGame = true
+    changed()
   }
 
   private fun setBusy(busy: Boolean) {
@@ -265,19 +284,18 @@ class PuzzleSession internal constructor(
   suspend fun restart() =
     engineThread.run {
       midend.restartGame(me)
+      changed()
       redrawAndSync()
     }
 
   suspend fun undo() =
     engineThread.run {
-      midend.processKey(me, 0, 0, Buttons.UI_UNDO)
-      redrawAndSync()
+      processKey(0, 0, Buttons.UI_UNDO)
     }
 
   suspend fun redo() =
     engineThread.run {
-      midend.processKey(me, 0, 0, Buttons.UI_REDO)
-      redrawAndSync()
+      processKey(0, 0, Buttons.UI_REDO)
     }
 
   /** @return an error message, or null on success. */
@@ -285,6 +303,7 @@ class PuzzleSession internal constructor(
     engineThread.run {
       setBusy(true)
       val error = midend.solve(me)
+      if (error == null) changed()
       redrawAndSync()
       setBusy(false)
       error
@@ -338,15 +357,24 @@ class PuzzleSession internal constructor(
     }
   }
 
-  private fun processPointer(event: PointerEvent) {
-    midend.processKey(me, event.x, event.y, event.code)
+  /** Engine thread only. Redraws whatever the outcome, since a no-effect key can still move a cursor. */
+  private fun processKey(
+    x: Int,
+    y: Int,
+    code: Int,
+  ) {
+    val result = midend.processKey(me, x, y, code)
+    if (result == PKR_SOME_EFFECT) changed()
     redrawAndSync()
+  }
+
+  private fun processPointer(event: PointerEvent) {
+    processKey(event.x, event.y, event.code)
   }
 
   suspend fun key(button: Int) =
     engineThread.run {
-      midend.processKey(me, 0, 0, button)
-      redrawAndSync()
+      processKey(0, 0, button)
     }
 
   suspend fun presets(): List<PresetEntry> =
@@ -485,6 +513,8 @@ class PuzzleSession internal constructor(
         // front ends call midend_new_game afterwards for every section except preferences (see
         // menu_config_event in gtk.c), and preferences are excluded because they change only how
         // an existing game is presented, not what it is.
+        // Preferences are saved beside the game, so they count as a change too.
+        changed()
         if (section != ConfigSection.PREFS) {
           setBusy(true)
           startNewGame()
@@ -594,6 +624,7 @@ class PuzzleSession internal constructor(
         if (error == null) {
           // A restored save *is* a game, so this is the other legitimate route to hasGame.
           hasGame = true
+          changed()
           applySize()
           applyPalette()
           midend.forceRedraw(me)
@@ -621,15 +652,19 @@ class PuzzleSession internal constructor(
   )
 
   /**
-   * [serialise] and [savePrefs] as a single engine-thread task.
+   * [serialise] and [savePrefs] as a single engine-thread task, or null if there is no game to
+   * save: before the first one is generated, or once the session has been closed. Serialising then
+   * would trip an assert in the C (or read a freed mid-end), and a save queued behind a debounce
+   * can easily arrive late enough to find itself there.
    *
-   * The caller persists from `onPause`, racing the engine being closed on `TRIM_MEMORY_UI_HIDDEN`.
-   * Closing lets already-queued work finish but refuses anything new, so two separate calls — the
-   * second only submitted after the first returns — could lose the second. One task is queued
-   * synchronously, before the engine can be closed, and so always completes.
+   * One task, so that both halves describe the same moment and the whole is queued synchronously,
+   * before the engine can be closed: closing lets already-queued work finish but refuses anything
+   * new, so two separate calls could lose the second.
    */
-  suspend fun saveState(): SavedState =
-    engineThread.run { SavedState(midend.serialise(me), midend.savePrefs(me)) }
+  suspend fun saveState(): SavedState? =
+    engineThread.run {
+      if (!hasGame) null else SavedState(midend.serialise(me), midend.savePrefs(me))
+    }
 
   suspend fun loadPrefs(bytes: ByteArray) =
     engineThread.run {
