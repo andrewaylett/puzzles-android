@@ -16,18 +16,12 @@
 package uk.aylett.puzzles.engine
 
 import android.util.Log
-import com.dylibso.chicory.runtime.HostFunction
-import com.dylibso.chicory.runtime.ImportValues
-import com.dylibso.chicory.runtime.Instance
 import com.dylibso.chicory.runtime.Memory
-import com.dylibso.chicory.runtime.WasmFunctionHandle
-import com.dylibso.chicory.wasm.types.FunctionType
-import com.dylibso.chicory.wasm.types.ValType
+import uk.aylett.puzzles.engine.wasm.Puzzles_Env
+import uk.aylett.puzzles.engine.wasm.Puzzles_ModuleImports
+import uk.aylett.puzzles.engine.wasm.Puzzles_WasiSnapshotPreview1
 
 private const val LOG_TAG = "PuzzlesWasm"
-
-/** A `void` WASM export/import returns `null` from Chicory; a non-void one returns `long[N]`. */
-private val VOID_RESULT: LongArray? = null
 
 /**
  * The mutable slot a running [Instance] calls back into.
@@ -70,227 +64,272 @@ class EngineHooks {
 }
 
 /**
- * Builds the [ImportValues] the WASM module requires to instantiate.
+ * The host side of the WASM module's imports, implementing the interfaces generated from it.
  *
- * The 28 imports and their exact signatures come from disassembling `puzzles-midend.wasm` (see
- * `wasm-midend.md` and the repository's own `AGENTS.md`), not from the upstream documentation
- * alone: the module also pulls in `emscripten_notify_memory_growth` and five WASI shims that the
- * mid-end docs don't mention, and the module fails to instantiate if any import is missing.
+ * The 28 imports and their exact signatures come from the module itself, so the build fails if
+ * one is missing or changes shape; `wasm-midend.md` documents only 22 of them, the module also
+ * pulls in `emscripten_notify_memory_growth` and five WASI shims. Use [toImportValues] to wire
+ * it up.
+ *
+ * The generated interfaces carry no [com.dylibso.chicory.runtime.Instance], yet several imports
+ * must read or write linear memory, and the instance cannot exist until its imports do. So
+ * [memory] is bound once, straight after instantiation and before anything is run: the module's
+ * `_initialize` calls the WASI shims, so it must not be run before then.
  */
 class WasmImports(
   private val hooks: EngineHooks,
-) {
-  fun build(): ImportValues =
-    ImportValues
-      .builder()
-      .addFunction(
-        *envFunctions(),
-        *wasiFunctions(),
-      ).build()
+) : Puzzles_ModuleImports,
+  Puzzles_Env,
+  Puzzles_WasiSnapshotPreview1 {
+  lateinit var memory: Memory
 
-  private fun envFunctions(): Array<HostFunction> =
-    arrayOf(
-      env("wasmmid_fatal_error", i(1)) { instance, args ->
-        val message = instance.memory().readCString(args[0].toInt())
-        Log.e(LOG_TAG, "fatal error from puzzle engine: $message")
-        // The module is a reactor with no proc_exit of its own; unwinding the current host call
-        // with an exception is the only way to stop it, matching "report the message and stop".
-        throw IllegalStateException("puzzle engine fatal error: $message")
-      },
-      env("wasmmid_get_date_64", i(1)) { instance, args ->
-        // Two different high-entropy values: this seeds a fresh puzzle's RNG, and reusing one
-        // clock reading for both halves would make every "new game" identical.
-        val memory = instance.memory()
-        val ptr = args[0].toInt()
-        memory.writeI32(ptr, System.currentTimeMillis().toInt())
-        memory.writeI32(ptr + 4, System.nanoTime().toInt())
-        VOID_RESULT
-      },
-      env("wasmmid_default_colour", i(1)) { instance, args ->
-        val memory = instance.memory()
-        val ptr = args[0].toInt()
-        // The mid-end uses this to pick a border colour, and games derive their background and
-        // highlight/lowlight from it (`game_mkhighlight`), so it is how a theme reaches them.
-        val argb = hooks.defaultColour
-        memory.writeF32(ptr, ((argb shr 16) and 0xFF) / 255f)
-        memory.writeF32(ptr + 4, ((argb shr 8) and 0xFF) / 255f)
-        memory.writeF32(ptr + 8, (argb and 0xFF) / 255f)
-        VOID_RESULT
-      },
-      env("wasmmid_activate_timer", i()) { _, _ ->
-        hooks.onActivateTimer?.invoke()
-        VOID_RESULT
-      },
-      env("wasmmid_deactivate_timer", i()) { _, _ ->
-        hooks.onDeactivateTimer?.invoke()
-        VOID_RESULT
-      },
-      env("wasmmid_ids_changed", i()) { _, _ ->
-        hooks.onIdsChanged?.invoke()
-        VOID_RESULT
-      },
-      env("wasmmid_draw_text", i(8)) { instance, args ->
-        // args[0] is the C `drawing *`, unused: this front end has exactly one drawing surface.
-        val text = instance.memory().readCString(args[7].toInt())
-        hooks.drawingSink?.drawText(
-          x = args[1].toInt(),
-          y = args[2].toInt(),
-          fontType = args[3].toInt(),
-          fontSize = args[4].toInt(),
-          align = args[5].toInt(),
-          colour = args[6].toInt(),
-          text = text,
-        )
-        VOID_RESULT
-      },
-      env("wasmmid_draw_rect", i(6)) { _, args ->
-        hooks.drawingSink?.drawRect(
-          x = args[1].toInt(),
-          y = args[2].toInt(),
-          w = args[3].toInt(),
-          h = args[4].toInt(),
-          colour = args[5].toInt(),
-        )
-        VOID_RESULT
-      },
-      env("wasmmid_draw_line", i(6)) { _, args ->
-        hooks.drawingSink?.drawLine(
-          x1 = args[1].toInt(),
-          y1 = args[2].toInt(),
-          x2 = args[3].toInt(),
-          y2 = args[4].toInt(),
-          colour = args[5].toInt(),
-        )
-        VOID_RESULT
-      },
-      env("wasmmid_draw_polygon", i(5)) { instance, args ->
-        val memory = instance.memory()
-        val coordsPtr = args[1].toInt()
-        val nPoints = args[2].toInt()
-        val coords = IntArray(nPoints * 2) { i -> memory.readInt(coordsPtr + i * 4) }
-        hooks.drawingSink?.drawPolygon(
-          coords = coords,
-          fillColour = args[3].toInt(),
-          outlineColour = args[4].toInt(),
-        )
-        VOID_RESULT
-      },
-      env("wasmmid_draw_circle", i(6)) { _, args ->
-        hooks.drawingSink?.drawCircle(
-          cx = args[1].toInt(),
-          cy = args[2].toInt(),
-          radius = args[3].toInt(),
-          fillColour = args[4].toInt(),
-          outlineColour = args[5].toInt(),
-        )
-        VOID_RESULT
-      },
-      env("wasmmid_draw_update", i(5)) { _, args ->
-        hooks.drawingSink?.drawUpdate(
-          x = args[1].toInt(),
-          y = args[2].toInt(),
-          w = args[3].toInt(),
-          h = args[4].toInt(),
-        )
-        VOID_RESULT
-      },
-      env("wasmmid_clip", i(5)) { _, args ->
-        hooks.drawingSink?.clip(
-          x = args[1].toInt(),
-          y = args[2].toInt(),
-          w = args[3].toInt(),
-          h = args[4].toInt(),
-        )
-        VOID_RESULT
-      },
-      env("wasmmid_unclip", i(1)) { _, _ ->
-        hooks.drawingSink?.unclip()
-        VOID_RESULT
-      },
-      env("wasmmid_start_draw", i(1)) { _, _ ->
-        hooks.drawingSink?.startDraw()
-        VOID_RESULT
-      },
-      env("wasmmid_end_draw", i(1)) { _, _ ->
-        hooks.drawingSink?.endDraw()
-        VOID_RESULT
-      },
-      env("wasmmid_status_bar", i(2)) { instance, args ->
-        val text = instance.memory().readCString(args[1].toInt())
-        hooks.drawingSink?.statusBar(text)
-        VOID_RESULT
-      },
-      HostFunction(
-        "env",
-        "wasmmid_blitter_new",
-        FunctionType.of(arrayOf(I32, I32, I32), arrayOf(I32)),
-        WasmFunctionHandle { _, args ->
-          val handle = hooks.drawingSink?.blitterNew(args[1].toInt(), args[2].toInt()) ?: 0
-          longArrayOf(handle.toLong())
-        },
-      ),
-      env("wasmmid_blitter_free", i(2)) { _, args ->
-        hooks.drawingSink?.blitterFree(args[1].toInt())
-        VOID_RESULT
-      },
-      env("wasmmid_blitter_save", i(4)) { _, args ->
-        hooks.drawingSink?.blitterSave(args[1].toInt(), args[2].toInt(), args[3].toInt())
-        VOID_RESULT
-      },
-      env("wasmmid_blitter_load", i(4)) { _, args ->
-        hooks.drawingSink?.blitterLoad(args[1].toInt(), args[2].toInt(), args[3].toInt())
-        VOID_RESULT
-      },
-      HostFunction(
-        "env",
-        "wasmmid_draw_thick_line",
-        FunctionType.of(arrayOf(I32, F32, F32, F32, F32, F32, I32), emptyArray()),
-        WasmFunctionHandle { _, args ->
-          hooks.drawingSink?.drawThickLine(
-            thickness = Float.fromBits(args[1].toInt()),
-            x1 = Float.fromBits(args[2].toInt()),
-            y1 = Float.fromBits(args[3].toInt()),
-            x2 = Float.fromBits(args[4].toInt()),
-            y2 = Float.fromBits(args[5].toInt()),
-            colour = args[6].toInt(),
-          )
-          VOID_RESULT
-        },
-      ),
-      env("emscripten_notify_memory_growth", i(1)) { _, _ -> VOID_RESULT },
-    )
+  override fun env(): Puzzles_Env = this
 
-  /** WASI shims libc pulls in, undocumented by `wasm-midend.md`. None do real I/O. */
-  private fun wasiFunctions(): Array<HostFunction> =
-    arrayOf(
-      wasi("environ_sizes_get", i(2), i(1)) { instance, args ->
-        val memory = instance.memory()
-        memory.writeI32(args[0].toInt(), 0)
-        memory.writeI32(args[1].toInt(), 0)
-        longArrayOf(0)
-      },
-      wasi("environ_get", i(2), i(1)) { _, _ -> longArrayOf(0) },
-      wasi("fd_close", i(1), i(1)) { _, _ -> longArrayOf(0) },
-      wasi("fd_seek", listOf(I32, I64, I32, I32), i(1)) { instance, args ->
-        instance.memory().writeI32(args[3].toInt(), 0)
-        longArrayOf(0)
-      },
-      wasi("fd_write", i(4), i(1)) { instance, args -> fdWrite(instance.memory(), args) },
+  override fun wasiSnapshotPreview1(): Puzzles_WasiSnapshotPreview1 = this
+
+  // ---- env ------------------------------------------------------------------------------------
+
+  override fun wasmmidFatalError(arg0: Int) {
+    val message = memory.readCString(arg0)
+    Log.e(LOG_TAG, "fatal error from puzzle engine: $message")
+    // The module is a reactor with no proc_exit of its own; unwinding the current host call
+    // with an exception is the only way to stop it, matching "report the message and stop".
+    throw IllegalStateException("puzzle engine fatal error: $message")
+  }
+
+  override fun wasmmidGetDate64(arg0: Int) {
+    // Two different high-entropy values: this seeds a fresh puzzle's RNG, and reusing one
+    // clock reading for both halves would make every "new game" identical.
+    memory.writeI32(arg0, System.currentTimeMillis().toInt())
+    memory.writeI32(arg0 + 4, System.nanoTime().toInt())
+  }
+
+  override fun wasmmidDefaultColour(arg0: Int) {
+    // The mid-end uses this to pick a border colour, and games derive their background and
+    // highlight/lowlight from it (`game_mkhighlight`), so it is how a theme reaches them.
+    val argb = hooks.defaultColour
+    memory.writeF32(arg0, ((argb shr 16) and 0xFF) / 255f)
+    memory.writeF32(arg0 + 4, ((argb shr 8) and 0xFF) / 255f)
+    memory.writeF32(arg0 + 8, (argb and 0xFF) / 255f)
+  }
+
+  override fun wasmmidActivateTimer() {
+    hooks.onActivateTimer?.invoke()
+  }
+
+  override fun wasmmidDeactivateTimer() {
+    hooks.onDeactivateTimer?.invoke()
+  }
+
+  override fun wasmmidIdsChanged() {
+    hooks.onIdsChanged?.invoke()
+  }
+
+  // The first argument of every drawing call is the C `drawing *`, unused: this front end has
+  // exactly one drawing surface.
+
+  override fun wasmmidDrawText(
+    arg0: Int,
+    arg1: Int,
+    arg2: Int,
+    arg3: Int,
+    arg4: Int,
+    arg5: Int,
+    arg6: Int,
+    arg7: Int,
+  ) {
+    hooks.drawingSink?.drawText(
+      x = arg1,
+      y = arg2,
+      fontType = arg3,
+      fontSize = arg4,
+      align = arg5,
+      colour = arg6,
+      text = memory.readCString(arg7),
     )
+  }
+
+  override fun wasmmidDrawRect(
+    arg0: Int,
+    arg1: Int,
+    arg2: Int,
+    arg3: Int,
+    arg4: Int,
+    arg5: Int,
+  ) {
+    hooks.drawingSink?.drawRect(x = arg1, y = arg2, w = arg3, h = arg4, colour = arg5)
+  }
+
+  override fun wasmmidDrawLine(
+    arg0: Int,
+    arg1: Int,
+    arg2: Int,
+    arg3: Int,
+    arg4: Int,
+    arg5: Int,
+  ) {
+    hooks.drawingSink?.drawLine(x1 = arg1, y1 = arg2, x2 = arg3, y2 = arg4, colour = arg5)
+  }
+
+  override fun wasmmidDrawPolygon(
+    arg0: Int,
+    arg1: Int,
+    arg2: Int,
+    arg3: Int,
+    arg4: Int,
+  ) {
+    val coords = IntArray(arg2 * 2) { i -> memory.readInt(arg1 + i * 4) }
+    hooks.drawingSink?.drawPolygon(coords = coords, fillColour = arg3, outlineColour = arg4)
+  }
+
+  override fun wasmmidDrawCircle(
+    arg0: Int,
+    arg1: Int,
+    arg2: Int,
+    arg3: Int,
+    arg4: Int,
+    arg5: Int,
+  ) {
+    hooks.drawingSink?.drawCircle(
+      cx = arg1,
+      cy = arg2,
+      radius = arg3,
+      fillColour = arg4,
+      outlineColour = arg5,
+    )
+  }
+
+  override fun wasmmidDrawUpdate(
+    arg0: Int,
+    arg1: Int,
+    arg2: Int,
+    arg3: Int,
+    arg4: Int,
+  ) {
+    hooks.drawingSink?.drawUpdate(x = arg1, y = arg2, w = arg3, h = arg4)
+  }
+
+  override fun wasmmidClip(
+    arg0: Int,
+    arg1: Int,
+    arg2: Int,
+    arg3: Int,
+    arg4: Int,
+  ) {
+    hooks.drawingSink?.clip(x = arg1, y = arg2, w = arg3, h = arg4)
+  }
+
+  override fun wasmmidUnclip(arg0: Int) {
+    hooks.drawingSink?.unclip()
+  }
+
+  override fun wasmmidStartDraw(arg0: Int) {
+    hooks.drawingSink?.startDraw()
+  }
+
+  override fun wasmmidEndDraw(arg0: Int) {
+    hooks.drawingSink?.endDraw()
+  }
+
+  override fun wasmmidStatusBar(
+    arg0: Int,
+    arg1: Int,
+  ) {
+    hooks.drawingSink?.statusBar(memory.readCString(arg1))
+  }
+
+  override fun wasmmidBlitterNew(
+    arg0: Int,
+    arg1: Int,
+    arg2: Int,
+  ): Int = hooks.drawingSink?.blitterNew(arg1, arg2) ?: 0
+
+  override fun wasmmidBlitterFree(
+    arg0: Int,
+    arg1: Int,
+  ) {
+    hooks.drawingSink?.blitterFree(arg1)
+  }
+
+  override fun wasmmidBlitterSave(
+    arg0: Int,
+    arg1: Int,
+    arg2: Int,
+    arg3: Int,
+  ) {
+    hooks.drawingSink?.blitterSave(arg1, arg2, arg3)
+  }
+
+  override fun wasmmidBlitterLoad(
+    arg0: Int,
+    arg1: Int,
+    arg2: Int,
+    arg3: Int,
+  ) {
+    hooks.drawingSink?.blitterLoad(arg1, arg2, arg3)
+  }
+
+  override fun wasmmidDrawThickLine(
+    arg0: Int,
+    arg1: Float,
+    arg2: Float,
+    arg3: Float,
+    arg4: Float,
+    arg5: Float,
+    arg6: Int,
+  ) {
+    hooks.drawingSink?.drawThickLine(
+      thickness = arg1,
+      x1 = arg2,
+      y1 = arg3,
+      x2 = arg4,
+      y2 = arg5,
+      colour = arg6,
+    )
+  }
+
+  /** Undocumented but required to instantiate; nothing here caches a view of memory. */
+  override fun emscriptenNotifyMemoryGrowth(arg0: Int) = Unit
+
+  // ---- wasi_snapshot_preview1: shims libc pulls in; none do real I/O ---------------------------
+
+  override fun environSizesGet(
+    arg0: Int,
+    arg1: Int,
+  ): Int {
+    memory.writeI32(arg0, 0)
+    memory.writeI32(arg1, 0)
+    return 0
+  }
+
+  override fun environGet(
+    arg0: Int,
+    arg1: Int,
+  ): Int = 0
+
+  override fun fdClose(arg0: Int): Int = 0
+
+  override fun fdSeek(
+    arg0: Int,
+    arg1: Long,
+    arg2: Int,
+    arg3: Int,
+  ): Int {
+    memory.writeI32(arg3, 0)
+    return 0
+  }
 
   /** Decodes the iovecs libc hands us and forwards the text to logcat rather than dropping it. */
-  private fun fdWrite(
-    memory: Memory,
-    args: LongArray,
-  ): LongArray {
-    val fd = args[0].toInt()
-    val iovsPtr = args[1].toInt()
-    val iovsLen = args[2].toInt()
-    val nwrittenPtr = args[3].toInt()
+  override fun fdWrite(
+    arg0: Int,
+    arg1: Int,
+    arg2: Int,
+    arg3: Int,
+  ): Int {
     val text = StringBuilder()
     var total = 0
-    for (i in 0 until iovsLen) {
-      val entry = iovsPtr + i * 8
+    for (i in 0 until arg2) {
+      val entry = arg1 + i * 8
       val bufPtr = memory.readInt(entry)
       val bufLen = memory.readInt(entry + 4)
       if (bufLen > 0) {
@@ -298,42 +337,16 @@ class WasmImports(
       }
       total += bufLen
     }
-    memory.writeI32(nwrittenPtr, total)
+    memory.writeI32(arg3, total)
     if (text.isNotEmpty()) {
       val message = text.toString().trimEnd('\n')
-      if (fd == 2) {
+      if (arg0 == 2) {
         Log.w(LOG_TAG, message)
         hooks.recordStderr(message)
       } else {
         Log.i(LOG_TAG, message)
       }
     }
-    return longArrayOf(0)
-  }
-
-  private fun env(
-    name: String,
-    params: List<ValType>,
-    body: WasmFunctionHandle,
-  ) = HostFunction("env", name, FunctionType.of(params.toTypedArray(), emptyArray()), body)
-
-  private fun wasi(
-    name: String,
-    params: List<ValType>,
-    returns: List<ValType>,
-    body: WasmFunctionHandle,
-  ) = HostFunction(
-    "wasi_snapshot_preview1",
-    name,
-    FunctionType.of(params.toTypedArray(), returns.toTypedArray()),
-    body,
-  )
-
-  private fun i(count: Int = 0): List<ValType> = List(count) { I32 }
-
-  private companion object {
-    val I32: ValType = ValType.I32
-    val I64: ValType = ValType.I64
-    val F32: ValType = ValType.F32
+    return 0
   }
 }

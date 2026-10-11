@@ -7,6 +7,11 @@ android {
   namespace = "uk.aylett.puzzles.engine"
   compileSdk = 37
 
+  testOptions {
+    // `android.util.Log` is only called when the module writes to stdout or stderr.
+    unitTests.isReturnDefaultValues = true
+  }
+
   defaultConfig {
     minSdk = 26
     consumerProguardFiles("consumer-rules.pro")
@@ -33,6 +38,7 @@ androidComponents {
 chicory {
   wasmFile.set(layout.projectDirectory.file("wasm/puzzles-midend.wasm"))
   moduleName.set("uk.aylett.puzzles.engine.wasm.PuzzlesModule")
+  moduleInterface.set("uk.aylett.puzzles.engine.wasm.Puzzles")
 }
 
 dependencies {

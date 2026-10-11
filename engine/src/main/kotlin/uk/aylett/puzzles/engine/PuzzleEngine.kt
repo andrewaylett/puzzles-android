@@ -18,6 +18,7 @@ package uk.aylett.puzzles.engine
 import android.content.Context
 import com.dylibso.chicory.runtime.Instance
 import uk.aylett.puzzles.engine.wasm.PuzzlesModule
+import uk.aylett.puzzles.engine.wasm.Puzzles_ModuleExports
 
 /**
  * Owns the one WASM instance for the process and the 40-entry game list it carries.
@@ -34,6 +35,28 @@ class PuzzleEngine private constructor(
 ) : AutoCloseable {
   companion object {
     /**
+     * Instantiates the module and runs its start-up. Needs no device, so a JVM test can reach it;
+     * must run on the thread that will own the instance.
+     */
+    internal fun instantiate(hooks: EngineHooks): WasmMidend {
+      val imports = WasmImports(hooks)
+      val instance: Instance =
+        Instance
+          .builder(PuzzlesModule.load())
+          .withImportValues(imports.toImportValues())
+          .withMachineFactory(PuzzlesModule::create)
+          .withStart(false)
+          // Sets up globals and data segments; it does not run `_initialize`, which is below.
+          .withInitialize(true)
+          .build()
+      imports.memory = instance.memory()
+      val exports = Puzzles_ModuleExports(instance)
+      // The libc start-up this runs calls the WASI shims, which need `imports.memory`.
+      exports._initialize()
+      return WasmMidend(exports)
+    }
+
+    /**
      * Loads and instantiates the module, then lists its games. Runs entirely on the new engine
      * thread: nothing here should race a later call from that same thread.
      */
@@ -41,21 +64,7 @@ class PuzzleEngine private constructor(
       val engineThread = EngineThread()
       val hooks = EngineHooks()
       engineThread.diagnostics = hooks::recentStderr
-      val midend =
-        engineThread.run {
-          val module = PuzzlesModule.load()
-          val imports = WasmImports(hooks).build()
-          val instance: Instance =
-            Instance
-              .builder(module)
-              .withImportValues(imports)
-              .withMachineFactory(PuzzlesModule::create)
-              .withStart(false)
-              .withInitialize(true)
-              .build()
-          instance.export("_initialize").apply()
-          WasmMidend(instance)
-        }
+      val midend = engineThread.run { instantiate(hooks) }
       val games =
         engineThread.run {
           val count = midend.gameCount()

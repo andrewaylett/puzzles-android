@@ -13,6 +13,8 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+@file:Suppress("UnstableApiUsage")
+
 package uk.aylett.puzzles.build
 
 import com.dylibso.chicory.build.time.compiler.Config
@@ -22,6 +24,8 @@ import org.gradle.api.Plugin
 import org.gradle.api.Project
 import org.gradle.api.file.DirectoryProperty
 import org.gradle.api.file.RegularFileProperty
+import org.gradle.api.problems.ProblemGroup
+import org.gradle.api.problems.Problems
 import org.gradle.api.provider.Property
 import org.gradle.api.tasks.CacheableTask
 import org.gradle.api.tasks.Input
@@ -31,6 +35,7 @@ import org.gradle.api.tasks.PathSensitive
 import org.gradle.api.tasks.PathSensitivity
 import org.gradle.api.tasks.TaskAction
 import org.gradle.api.tasks.bundling.Jar
+import javax.inject.Inject
 
 /**
  * Translates a WASM module into JVM bytecode at build time.
@@ -40,6 +45,7 @@ import org.gradle.api.tasks.bundling.Jar
  * Interpreting instead is not a real option: a hard Solo generates in ~2s compiled and ~17s
  * interpreted, and that is on a desktop.
  */
+@CacheableTask
 abstract class ChicoryCompileTask : DefaultTask() {
   @get:InputFile
   @get:PathSensitive(PathSensitivity.NONE)
@@ -48,6 +54,10 @@ abstract class ChicoryCompileTask : DefaultTask() {
   /** Fully-qualified name of the generated loader class. */
   @get:Input
   abstract val moduleName: Property<String>
+
+  /** Fully-qualified name of the generated module interface. */
+  @get:Input
+  abstract val moduleInterface: Property<String>
 
   /** Translated WASM bodies, already bytecode; jarred rather than compiled. */
   @get:OutputDirectory
@@ -61,6 +71,10 @@ abstract class ChicoryCompileTask : DefaultTask() {
   @get:OutputDirectory
   abstract val resourcesDirectory: DirectoryProperty
 
+  @get:Inject
+  abstract val problems: Problems
+
+  @Suppress("NewApi")
   @TaskAction
   fun generate() {
     listOf(classesDirectory, sourcesDirectory, resourcesDirectory)
@@ -71,6 +85,7 @@ abstract class ChicoryCompileTask : DefaultTask() {
         .builder()
         .withWasmFile(wasmFile.get().asFile.toPath())
         .withName(moduleName.get())
+        .withModuleInterface(moduleInterface.get())
         .withTargetClassFolder(classesDirectory.get().asFile.toPath())
         .withTargetSourceFolder(sourcesDirectory.get().asFile.toPath())
         .withTargetWasmFolder(resourcesDirectory.get().asFile.toPath())
@@ -81,11 +96,34 @@ abstract class ChicoryCompileTask : DefaultTask() {
     // the meta-WASM must then still carry their bodies, hence passing the set on.
     val interpreted = generator.generateResources()
     generator.generateSources()
+    generator.generateModuleInterface(moduleInterface.get())
     generator.generateMetaWasm(interpreted)
 
     if (interpreted.isNotEmpty()) {
-      logger.warn("Chicory left ${interpreted.size} function(s) to the interpreter")
+      val reporter = problems.reporter
+
+      val problems =
+        interpreted
+          .stream()
+          .map {
+            reporter.create(interpretedProblem) {
+              details("Function $it left to be interpreted")
+            }
+          }.toList()
+      throw reporter.throwing(
+        RuntimeException("Chicory left ${interpreted.size} function(s) to the interpreter"),
+        problems,
+      )
     }
+  }
+
+  companion object {
+    val interpretedProblem =
+      org.gradle.api.problems.ProblemId.create(
+        "interpreted",
+        "Function left to be interpreted",
+        ProblemGroup.create("chicory", "Chicory Problems"),
+      )
   }
 }
 
@@ -102,6 +140,7 @@ abstract class ChicoryCompilePlugin : Plugin<Project> {
         tasks.register("chicoryCompile", ChicoryCompileTask::class.java) {
           wasmFile.set(extension.wasmFile)
           moduleName.set(extension.moduleName)
+          moduleInterface.set(extension.moduleInterface)
           classesDirectory.set(layout.buildDirectory.dir("chicory/classes"))
           sourcesDirectory.set(layout.buildDirectory.dir("chicory/sources"))
           resourcesDirectory.set(layout.buildDirectory.dir("chicory/resources"))
@@ -122,4 +161,5 @@ abstract class ChicoryCompilePlugin : Plugin<Project> {
 abstract class ChicoryExtension {
   abstract val wasmFile: RegularFileProperty
   abstract val moduleName: Property<String>
+  abstract val moduleInterface: Property<String>
 }

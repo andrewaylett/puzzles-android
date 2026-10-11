@@ -164,6 +164,13 @@ them; the disassembly is authoritative and adds six more:
   `fd_write`. Hand-write them rather than pulling in a WASI implementation. `fd_write` should
   forward to logcat so diagnostics are not silently swallowed.
 
+The build generates `Puzzles_ModuleExports` and `Puzzles_ModuleImports` (plus `Puzzles_Env` and
+`Puzzles_WasiSnapshotPreview1`) from the module, so `WasmMidend` and `WasmImports` implement or wrap
+those rather than hand-writing signatures, and a change to the module's interface breaks the build
+instead of failing at instantiation. The generated imports are not given the `Instance`, which
+cannot exist before them, so `WasmImports.memory` is bound straight after instantiation, before
+`_initialize` is run (the builder does not run it, and its WASI calls touch memory).
+
 `wasmmid_debug` is **not** imported — this blob was built without `DEBUGGING`. Do not supply it.
 
 ### Marshalling
