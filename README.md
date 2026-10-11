@@ -16,29 +16,13 @@ that lives in the upstream C code, compiled to WebAssembly and executed
 on-device. This app's job is to give that engine a window, forward input
 events to it, and paint what it asks us to paint.
 
-### How it works
+The puzzles' compiled form is `engine/wasm/puzzles-midend.wasm`, a build
+artefact checked into this repository. At build time the `:engine` module
+translates it into JVM bytecode with [Chicory](https://chicory.dev/).
 
-Upstream splits every puzzle into a *back end* (the individual game's
-rules) and a *mid-end* (the generic machinery shared by all of them —
-game selection, undo/redo, serialisation, timers). The mid-end exposes a
-WASM-friendly API (`wasmmidend.c` in the upstream tree) that we consume
-directly, without the NDK and without Emscripten's JavaScript glue.
-
-The compiled result — the mid-end and all forty puzzle back ends in one
-module — is `engine/wasm/puzzles-midend.wasm`, checked into
-this repository as a build artefact (~0.9MB, built with `-Oz`). It is **not** executed as
-WASM at runtime, though: Android cannot load JVM bytecode it did not dex,
-so at build time the `:engine` module uses
-[Chicory](https://chicory.dev/)'s build-time compiler to translate the
-WASM module into ordinary JVM bytecode ahead of time, which is then dexed
-like any other class. Chicory's runtime interpreter is available too, but
-measured on a desktop it takes roughly 8x longer than the compiled path
-for a representative puzzle — too slow for a phone, so it isn't used here.
-
-See [AGENTS.md](AGENTS.md) for the details that matter to anyone changing
-this code: the threading model (the WASM instance is not reentrant), how
-drawing works (the mid-end pushes paint calls to us, rather than us
-pulling from it), and how values are marshalled across the WASM boundary.
+[AGENTS.md](AGENTS.md) explains why it is built this way, and the details
+that matter to anyone changing the code: the threading model, how drawing
+works, and how values cross the WASM boundary.
 
 ## Building the app
 
@@ -54,6 +38,21 @@ Requirements:
 
 `./gradlew build` runs the full check, including Spotless formatting
 checks and tests.
+
+## Testing
+
+| Command | Runs |
+| --- | --- |
+| `./gradlew :app:testDebugUnitTest` | JVM unit tests for the app (JUnit 5, MockK, `kotlinx-coroutines-test`) in `app/src/test` |
+| `./gradlew :engine:connectedDebugAndroidTest` | Tests that need the real engine under ART, in `engine/src/androidTest`; needs a device or emulator |
+
+## Conventions
+
+- Kotlin throughout, `ktlint_official` style, 2-space indent, 100-column lines, no wildcard imports.
+- Java 17 bytecode, toolchain pinned to Temurin 21 via `mise.toml`.
+- Jetpack Compose with Material 3.
+- `minSdk = 26`, `compileSdk`/`targetSdk` 37.
+- Apache 2.0; licence headers are enforced by Spotless.
 
 ## Regenerating the WASM blob
 

@@ -192,22 +192,12 @@ arguments are raw bits (`java.lang.Double.doubleToRawLongBits`), `f32` likewise 
 
 ### Constants
 
-Take these from `../../native/puzzles/puzzles.h` — never from memory, as a transposed value produces
-puzzles that respond to the wrong gestures and is miserable to debug.
-
-Buttons start at `LEFT_BUTTON = 0x0200` and run consecutively: `LEFT_BUTTON`, `MIDDLE_BUTTON`,
-`RIGHT_BUTTON`, `LEFT_DRAG`, `MIDDLE_DRAG`, `RIGHT_DRAG`, `LEFT_RELEASE`, `MIDDLE_RELEASE`,
-`RIGHT_RELEASE`, `CURSOR_UP`, `CURSOR_DOWN`, `CURSOR_LEFT`, `CURSOR_RIGHT`, `CURSOR_SELECT`,
-`CURSOR_SELECT2`. Modifiers: `MOD_STYLUS = 0x0800`, `MOD_CTRL = 0x1000`, `MOD_SHFT = 0x2000`,
-`MOD_NUM_KEYPAD = 0x4000`, `MOD_MASK = 0x7800`.
-
-Text: `FONT_FIXED = 0`, `FONT_VARIABLE = 1`; `ALIGN_VNORMAL = 0x000`, `ALIGN_VCENTRE = 0x100`,
-`ALIGN_HLEFT = 0x000`, `ALIGN_HCENTRE = 0x001`, `ALIGN_HRIGHT = 0x002`.
-
-Config: `C_STRING = 0`, `C_CHOICES = 1`, `C_BOOLEAN = 2`, `C_END = 3`. Config sections:
-`CFG_SETTINGS = 0`, `CFG_SEED = 1`, `CFG_DESC = 2`, `CFG_PREFS = 3`.
-
-`midend_status` returns 0 while play continues, +1 on a win, −1 on a loss.
+The values live in `PuzzleConstants.kt`, which is the reference for them; this file does not repeat
+them, so there is only one copy to get wrong. Take any new one from
+`../../native/puzzles/puzzles.h` — never from memory, as a transposed value produces puzzles that
+respond to the wrong gestures and is miserable to debug. The button codes are consecutive from
+`LEFT_BUTTON`, and the `UI_*` codes continue the same enum after a marker, which is the easiest
+place to be out by one.
 
 ### Touch input
 
@@ -353,7 +343,8 @@ Generation can take many seconds, so games are made ahead of time and kept in `P
   behind a puzzle nobody asked for. That engine has no `newGameSource`, or it would take from what
   it is filling. An `EngineFailure` abandons that game for the pass and carries on on a fresh engine.
 - **Targets**: every preset (all submenus), the game's default parameters and the stored custom
-  types; 20 per kind for favourites, 10 for the rest (`PoolPolicy`). Favourites are done first.
+  types, with more kept for favourites than for the rest (the numbers are in `PoolPolicy`).
+  Favourites are done first.
   `PuzzlePool.retain` removes kinds that are no longer wanted and trims over-full ones, per game and
   only once that game was enumerated in full.
 - **When**: WorkManager, constrained to charging (periodically, and whenever favourites or custom
@@ -574,22 +565,29 @@ there is copied from `NOTICE`; keep the two in step). The acknowledgement above 
 
 ## Testing
 
-JVM unit tests live in `app/src/test` (JUnit 5, MockK, `kotlinx-coroutines-test`); run them with
-`./gradlew :app:testDebugUnitTest`. ViewModels take their collaborators by constructor
-(`EngineProvider`, the stores) precisely so they can be tested without the WASM module or an
-Android `Context`; sessions and the engine are final classes, so tests mock them with MockK rather
-than hiding them behind interfaces that would only exist for the tests. Anything that needs the
-real engine belongs in `engine/src/androidTest`.
+ViewModels take their collaborators by constructor (`EngineProvider`, the stores) precisely so they
+can be tested without the WASM module or an Android `Context`; sessions and the engine are final
+classes, so tests mock them with MockK rather than hiding them behind interfaces that would only
+exist for the tests. Anything that needs the real engine belongs in `engine/src/androidTest`.
+The commands to run them are in the README.
 
-## Conventions
+## Toolchain
 
-- Kotlin throughout, `ktlint_official` style, 2-space indent, 100-column lines, no wildcard imports.
-- Java 17 bytecode, toolchain pinned to Temurin 21 via `mise.toml` (AGP dislikes newer).
-- Jetpack Compose with Material 3.
-- `minSdk = 26`, `compileSdk`/`targetSdk` 37.
-- Apache 2.0; headers enforced by Spotless.
-- Gradle needs network access, which the agent sandbox denies — run it with the sandbox disabled.
+The toolchain is pinned to Temurin 21 because AGP dislikes newer. The versions and style rules are
+listed in the README. Gradle needs network access, which the agent sandbox denies — run it with
+the sandbox disabled.
 
 ## Documentation
 
-Explain **why**, not how. If you don't know why, ask rather than guess.
+Where each kind of documentation lives here, following the Diátaxis compass:
+
+- **Explanation**: this file, and inline comments. It records why the code is shaped as it is,
+  including the traps that cost debugging time.
+- **Reference**: the README, and doc-comments. Anything that is a list of facts to look up — the
+  constants (`PuzzleConstants.kt`), the pool sizes (`PoolPolicy`), the build and test commands —
+  belongs there, not here, where it would be a second copy to keep in step.
+- **How-to**: the README for building, testing and regenerating the WASM blob; module-level
+  KDoc for the rest (see `IconRenderer` for regenerating icons).
+- **Tutorial**: none yet. The README is the nearest thing to a first-run walk-through.
+
+If you don't know why, ask rather than guess.
