@@ -63,8 +63,9 @@ dexed bytecode replace it.
   the timer tick, redraws, new-game generation — is serialised onto it through a queue.
 - Nothing touching the engine may run on the UI thread.
 - Linear memory can grow (hence the `emscripten_notify_memory_growth` import). **Never cache a
-  memory view, ByteBuffer or pointer across a call into WASM.** Re-read `instance.memory()` each
-  time. Getting this wrong produces sporadic corruption that only shows up on large puzzles.
+  view, ByteBuffer or raw array derived from memory across a call into WASM.** The `Memory` object
+  itself is stable for the life of the instance (growth happens inside it), so hold that, and read
+  and write through it each time. Getting this wrong produces sporadic corruption that only shows up on large puzzles.
 
 ## Drawing — push, not pull
 

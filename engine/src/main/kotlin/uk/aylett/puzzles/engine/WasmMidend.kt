@@ -34,14 +34,15 @@ import uk.aylett.puzzles.engine.wasm.Puzzles_ModuleExports
  * raw-bits encoding of `float` and `double` arguments. What is left here is the part the module's
  * signatures can't express: which `int`s are pointers, which strings are ours to free.
  *
- * Every method here must run on the engine thread. Memory is fetched from the exports on every
- * access rather than held in a field: linear memory can grow underneath a long-running instance,
- * so no view or pointer may be kept across a call into WASM.
+ * Every method here must run on the engine thread. The [Memory] object is held for the life of the
+ * instance: growth happens inside it, so it stays valid. What must not be kept across a call into
+ * WASM is anything derived from it — a `ByteBuffer`, a view, a raw array — as growth can replace
+ * the storage underneath those.
  */
 class WasmMidend(
   private val exports: Puzzles_ModuleExports,
 ) {
-  private fun memory(): Memory = exports.memory()
+  private val memory: Memory = exports.memory()
 
   private fun Int.toBool(): Boolean = this != 0
 
@@ -65,7 +66,7 @@ class WasmMidend(
   }
 
   /** Reads a NUL-terminated string without taking ownership of [ptr]. */
-  private fun readCString(ptr: Int): String = if (ptr == 0) "" else memory().readCString(ptr)
+  private fun readCString(ptr: Int): String = if (ptr == 0) "" else memory.readCString(ptr)
 
   /**
    * Reads a NUL-terminated string the module handed over as a fresh allocation (an error message,
@@ -76,7 +77,7 @@ class WasmMidend(
    */
   private fun readOwnedCString(ptr: Int): String? {
     if (ptr == 0) return null
-    val s = memory().readCString(ptr)
+    val s = memory.readCString(ptr)
     free(ptr)
     return s
   }
@@ -93,14 +94,14 @@ class WasmMidend(
    */
   private fun readBorrowedCString(ptr: Int): String? {
     if (ptr == 0) return null
-    return memory().readCString(ptr)
+    return memory.readCString(ptr)
   }
 
   /** Allocates and writes a NUL-terminated copy of [s]; the caller owns the result until freed. */
   private fun writeCString(s: String): Int {
     val bytes = s.toByteArray(Charsets.UTF_8)
     val ptr = malloc(bytes.size + 1)
-    memory().writeCString(ptr, s)
+    memory.writeCString(ptr, s)
     return ptr
   }
 
@@ -181,10 +182,10 @@ class WasmMidend(
     withIntScratch(2) { scratch ->
       val xPtr = scratch
       val yPtr = scratch + 4
-      memory().writeI32(xPtr, width)
-      memory().writeI32(yPtr, height)
+      memory.writeI32(xPtr, width)
+      memory.writeI32(yPtr, height)
       exports.midendSize(me, xPtr, yPtr, if (userSize) 1 else 0, devicePixelRatio)
-      memory().readInt(xPtr) to memory().readInt(yPtr)
+      memory.readInt(xPtr) to memory.readInt(yPtr)
     }
 
   fun resetTilesize(me: Int) = exports.midendResetTilesize(me)
@@ -220,8 +221,8 @@ class WasmMidend(
   fun colours(me: Int): FloatArray =
     withIntScratch(1) { nPtr ->
       val colours = exports.midendColours(me, nPtr)
-      val n = memory().readInt(nPtr)
-      FloatArray(n * 3) { i -> memory().readFloat(colours + i * 4) }
+      val n = memory.readInt(nPtr)
+      FloatArray(n * 3) { i -> memory.readFloat(colours + i * 4) }
     }
 
   fun wantsStatusbar(me: Int): Boolean = exports.midendWantsStatusbar(me).toBool()
@@ -244,10 +245,10 @@ class WasmMidend(
         null
       } else {
         intArrayOf(
-          memory().readInt(xPtr),
-          memory().readInt(yPtr),
-          memory().readInt(wPtr),
-          memory().readInt(hPtr),
+          memory.readInt(xPtr),
+          memory.readInt(yPtr),
+          memory.readInt(wPtr),
+          memory.readInt(hPtr),
         )
       }
     }
@@ -353,7 +354,7 @@ class WasmMidend(
     withIntScratch(1) { titlePtr ->
       val cfg = exports.midendGetConfig(me, which, titlePtr)
       // The title string is owned by the mid-end's own state, not a fresh allocation: read only.
-      cfg to readCString(memory().readInt(titlePtr))
+      cfg to readCString(memory.readInt(titlePtr))
     }
 
   fun configItemType(
@@ -432,7 +433,7 @@ class WasmMidend(
   fun requestKeys(me: Int): Pair<Int, Int> =
     withIntScratch(1) { nPtr ->
       val keys = exports.midendRequestKeys(me, nPtr)
-      keys to memory().readInt(nPtr)
+      keys to memory.readInt(nPtr)
     }
 
   /** @return the label text, or null if the mid-end wants [currentKeyLabel] used instead. */
@@ -459,9 +460,9 @@ class WasmMidend(
   fun serialise(me: Int): ByteArray =
     withIntScratch(1) { outlenPtr ->
       val ptr = exports.wasmmidSerialise(me, outlenPtr)
-      val len = memory().readInt(outlenPtr)
+      val len = memory.readInt(outlenPtr)
       try {
-        memory().readBytes(ptr, len)
+        memory.readBytes(ptr, len)
       } finally {
         free(ptr)
       }
@@ -474,7 +475,7 @@ class WasmMidend(
   ): String? {
     val bufPtr = malloc(bytes.size)
     try {
-      memory().write(bufPtr, bytes)
+      memory.write(bufPtr, bytes)
       return readBorrowedCString(
         exports.wasmmidDeserialise(me, bufPtr, bytes.size),
       )
@@ -486,9 +487,9 @@ class WasmMidend(
   fun savePrefs(me: Int): ByteArray =
     withIntScratch(1) { outlenPtr ->
       val ptr = exports.wasmmidSavePrefs(me, outlenPtr)
-      val len = memory().readInt(outlenPtr)
+      val len = memory.readInt(outlenPtr)
       try {
-        memory().readBytes(ptr, len)
+        memory.readBytes(ptr, len)
       } finally {
         free(ptr)
       }
@@ -501,7 +502,7 @@ class WasmMidend(
   ): String? {
     val bufPtr = malloc(bytes.size)
     try {
-      memory().write(bufPtr, bytes)
+      memory.write(bufPtr, bytes)
       return readBorrowedCString(
         exports.wasmmidLoadPrefs(me, bufPtr, bytes.size),
       )
@@ -515,10 +516,10 @@ class WasmMidend(
     withIntScratch(1) { namePtrPtr ->
       val bufPtr = malloc(bytes.size)
       try {
-        memory().write(bufPtr, bytes)
+        memory.write(bufPtr, bytes)
         val error =
           exports.wasmmidIdentifyGame(namePtrPtr, bufPtr, bytes.size)
-        val namePtr = memory().readInt(namePtrPtr)
+        val namePtr = memory.readInt(namePtrPtr)
         val name = readOwnedCString(namePtr)
         // The error is a static string; only *name was allocated for us.
         readBorrowedCString(error)
