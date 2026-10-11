@@ -177,18 +177,12 @@ cannot exist before them, so `WasmImports.memory` is bound straight after instan
 
 ### Marshalling
 
-All values are the 32-bit C ABI: pointers, `int`, `bool` and `float` pass directly; strings are
-NUL-terminated bytes in linear memory. Anything the module allocates (`midend *`, `char *`,
-`config_item *`) is **owned by the module** and must be released through the matching export
-(`free`, `free_cfg`, `free_keys`) — never a host-side allocator.
-
-Several exports return values through `int *` out-parameters (`midend_size`, `midend_colours`,
-`wasmmid_serialise`, `midend_get_cursor_location`). Allocate a small scratch buffer inside WASM with
-the `malloc` export, pass pointers into it, read the results back, and `free` it.
-
-Chicory passes everything as `long[]`; a `void` export returns `null`, not an empty array. `f64`
-arguments are raw bits (`java.lang.Double.doubleToRawLongBits`), `f32` likewise via
-`Float.floatToRawIntBits`.
+`WasmMidend` is deliberately a thin wrapper that does no policy, so the rules for crossing the
+boundary (the 32-bit C ABI, module-owned allocations, out-parameter scratch buffers, which strings
+to free) are documented there, beside the code that applies them. The generated
+`Puzzles_ModuleExports` does Chicory's `long[]` encoding, so nothing here needs to. The one thing
+worth knowing before reading it is that ownership is *signalled by constness* in the upstream C; see
+the first trap below for what happens when that is ignored.
 
 ### Constants
 
@@ -236,11 +230,9 @@ followed by `midend_new_game` (see `menu_config_event` in upstream's `gtk.c`), e
 first trap, arrived at by a different route.
 
 **Ownership of returned strings is signalled by constness, and getting it wrong corrupts the heap.**
-`char *` returns (`midend_get_game_id`, `midend_get_random_seed`, `midend_text_format`,
-`midend_rewrite_statusbar`, `identify_game`'s out-param) are freshly allocated and must be freed.
-`const char *` returns — which is *every error message*, from `midend_solve`, `midend_game_id`,
-`midend_deserialise`, `midend_set_config` and `midend_load_prefs` — are static literals in the data segment. Passing one
-to `free` hands the allocator a pointer it never issued.
+`char *` returns are freshly allocated and must be freed; `const char *` returns — which is *every
+error message* — are static literals in the data segment, and passing one to `free` hands the
+allocator a pointer it never issued. `WasmMidend` lists which is which.
 
 **Generate before sizing, and re-size whenever the parameters change.** `midend_size` finishes by
 calling the back end's `set_size` on the current draw state, which `midend_new` leaves NULL until a

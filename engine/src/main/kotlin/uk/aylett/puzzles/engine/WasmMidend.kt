@@ -34,6 +34,12 @@ import uk.aylett.puzzles.engine.wasm.Puzzles_ModuleExports
  * raw-bits encoding of `float` and `double` arguments. What is left here is the part the module's
  * signatures can't express: which `int`s are pointers, which strings are ours to free.
  *
+ * Every value crosses as the 32-bit C ABI: pointers, `int`, `bool` and `float` pass directly, and
+ * strings are NUL-terminated bytes in linear memory. Anything the module allocates (`midend *`,
+ * `char *`, `config_item *`) is owned by the module and must be released through the matching
+ * export (`free`, `free_cfg`, `free_keys`), never a host-side allocator, which would hand the
+ * module's allocator a pointer it never issued. Hence the explicit `free*` methods below.
+ *
  * Every method here must run on the engine thread. The [Memory] object is held for the life of the
  * instance: growth happens inside it, so it stays valid. What must not be kept across a call into
  * WASM is anything derived from it — a `ByteBuffer`, a view, a raw array — as growth can replace
@@ -87,10 +93,11 @@ class WasmMidend(
    *
    * Upstream signals ownership through constness, and it is worth following exactly: `char *`
    * returns are freshly allocated and ours to free, while `const char *` returns — every error
-   * message from `midend_solve`, `midend_game_id`, `midend_deserialise`, `midend_load_prefs` and
-   * `identify_game` — are static string literals living in the module's data segment. Passing one
-   * of those to `free` hands the allocator a pointer it never issued, corrupting the heap in a way
-   * that surfaces much later and nowhere near the cause.
+   * message from `midend_solve`, `midend_game_id`, `midend_deserialise`, `midend_set_config`,
+   * `midend_load_prefs` and `identify_game` (though not the name it returns through its
+   * out-parameter, which is allocated) — are static string literals in the module's data
+   * segment. Passing one of those to `free` hands the allocator a pointer it never issued,
+   * corrupting the heap in a way that surfaces much later and nowhere near the cause.
    */
   private fun readBorrowedCString(ptr: Int): String? {
     if (ptr == 0) return null
@@ -105,7 +112,14 @@ class WasmMidend(
     return ptr
   }
 
-  /** Runs [block] with a scratch buffer of [n] `int`s, freeing it however [block] exits. */
+  /**
+   * Runs [block] with a scratch buffer of [n] `int`s, freeing it however [block] exits.
+   *
+   * Several exports return values through `int *` out-parameters (`midend_size`,
+   * `midend_colours`, `wasmmid_serialise`, `midend_get_cursor_location`). The pointer has to be
+   * into the module's own memory, so the buffer comes from its `malloc` export, and the results
+   * are read back out of it before it is freed.
+   */
   private inline fun <T> withIntScratch(
     n: Int,
     block: (Int) -> T,
