@@ -118,4 +118,20 @@ class CustomPresetStoreTest {
     val preset = CustomPreset("Easy", listOf(StoredField("Difficulty", "Easy")))
     assertEquals(listOf(before.copy(selected = 0)), preset.applyTo(listOf(before)))
   }
+
+  @Test
+  fun `a preset pushed off the list is reported, and reuse is not an eviction`() =
+    runTest {
+      val evicted = mutableListOf<Pair<String, CustomPreset>>()
+      val store =
+        CustomPresetStore(File(dir, "evict.json"), backgroundScope) { g, p -> evicted += g to p }
+      (1..3).forEach { store.use("Mines", mines(it + 5, 9)) }
+      store.use("Mines", mines(6, 9))
+      assertEquals(emptyList<Any>(), evicted)
+
+      store.use("Mines", mines(20, 9))
+
+      assertEquals(listOf("Mines"), evicted.map { it.first })
+      assertEquals("7x9, Mines 10, Ensure solubility", evicted.single().second.title)
+    }
 }

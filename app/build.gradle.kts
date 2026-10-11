@@ -51,6 +51,7 @@ dependencies {
   implementation(libs.androidx.lifecycle.runtime.compose)
   implementation(libs.androidx.datastore)
   implementation(libs.androidx.datastore.preferences)
+  implementation(libs.androidx.work.runtime)
   implementation(libs.kotlinx.serialization.json)
   implementation(libs.kotlinx.coroutines.android)
 

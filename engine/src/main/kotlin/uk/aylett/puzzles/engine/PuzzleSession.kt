@@ -56,6 +56,12 @@ class PuzzleSession internal constructor(
   private val midend: WasmMidend,
   private val me: Int,
   val game: GameInfo,
+  /**
+   * Where a new game may come from instead of the generator, looked up each time so that it can be
+   * attached to the engine after sessions already exist. Null for a session that must always
+   * generate: the pool's own, which would otherwise take from the pool it is filling.
+   */
+  private val newGameSource: () -> NewGameSource? = { null },
 ) : AutoCloseable {
   private val _frames = MutableStateFlow(PuzzleFrame())
   val frames: StateFlow<PuzzleFrame> = _frames.asStateFlow()
@@ -283,10 +289,41 @@ class PuzzleSession internal constructor(
    * Every route to a playable state goes through here or through a successful restore, so that
    * [hasGame] cannot drift out of step with the mid-end.
    */
-  private fun startNewGame() {
+  private fun startNewGame(fromSource: Boolean = false) {
+    if (fromSource && startPregeneratedGame()) return
     midend.newGame(me)
     hasGame = true
     changed()
+  }
+
+  /**
+   * Starts the next game from [NewGameSource], if there is one for the current parameters.
+   *
+   * A pre-generated game is a full save, so it carries the seed and the solver's auxiliary
+   * information that a bare game id would lose (Solve would then fail for games that cannot
+   * re-derive the answer). The source has already deleted the entry by the time it is returned: a
+   * save that traps the engine must not be offered again, or it would loop.
+   *
+   * A save the mid-end rejects is not an error for the player, who asked for a game and still gets
+   * one; it falls through to generating.
+   *
+   * Only for routes where the player is asking for a *new* game with the current parameters. Entering
+   * a game id or seed names a particular game and must never be answered with a different one.
+   */
+  private fun startPregeneratedGame(): Boolean {
+    // A game with no settings form has nothing to key a pre-generated game on.
+    if (!game.canConfigure) return false
+    val source = newGameSource() ?: return false
+    val saved =
+      source.take(game.name, readConfigForm(ConfigSection.SETTINGS).fields) ?: return false
+    val error = midend.deserialise(me, saved)
+    if (error != null) {
+      Log.w(LOG_TAG, "Discarding a pre-generated ${game.name} the mid-end rejected: $error")
+      return false
+    }
+    hasGame = true
+    changed()
+    return true
   }
 
   private fun setBusy(busy: Boolean) {
@@ -349,7 +386,7 @@ class PuzzleSession internal constructor(
   suspend fun newGame() =
     onEngine {
       setBusy(true)
-      startNewGame()
+      startNewGame(fromSource = true)
       applySize()
       applyPalette()
       forceRedraw()
@@ -504,17 +541,46 @@ class PuzzleSession internal constructor(
       }
     }
 
+  /** Engine thread only. Makes preset [id] the current parameters without generating a game. */
+  private fun selectPreset(id: Int) {
+    val menu = midend.getPresets(me)
+    val params = midend.presetMenuLookupById(menu, id)
+    midend.setParams(me, params)
+    // Presented as portrait, so play as portrait: see [transposed].
+    transposed(readConfigForm(ConfigSection.SETTINGS).fields)?.let {
+      writeConfig(ConfigSection.SETTINGS, it)
+    }
+  }
+
+  /**
+   * Makes preset [id] the current parameters exactly as [applyPreset] would, but generates nothing.
+   * For pre-generation, which must key its games on the parameters the player will really get.
+   */
+  suspend fun selectPresetParams(id: Int) = onEngine { selectPreset(id) }
+
+  /**
+   * Records [fields] as the current settings without generating a game, as [applyConfig] does for
+   * the settings section before it generates. @return an error message, or null on success.
+   */
+  suspend fun selectSettings(fields: List<ConfigField>): String? =
+    onEngine { writeConfig(ConfigSection.SETTINGS, fields) }
+
+  /**
+   * Generates a game for the current parameters and returns it as a save, without sizing or
+   * drawing it: generation needs no viewport, and the result is for [NewGameSource] to hand to a
+   * session that will size it itself. Never consults the source, which is what this fills.
+   */
+  suspend fun generateSave(): ByteArray =
+    onEngine {
+      startNewGame(fromSource = false)
+      midend.serialise(me)
+    }
+
   suspend fun applyPreset(id: Int) =
     onEngine {
       setBusy(true)
-      val menu = midend.getPresets(me)
-      val params = midend.presetMenuLookupById(menu, id)
-      midend.setParams(me, params)
-      // Presented as portrait, so play as portrait: see [transposed].
-      transposed(readConfigForm(ConfigSection.SETTINGS).fields)?.let {
-        writeConfig(ConfigSection.SETTINGS, it)
-      }
-      startNewGame()
+      selectPreset(id)
+      startNewGame(fromSource = true)
       applySize()
       applyPalette()
       forceRedraw()
@@ -593,7 +659,9 @@ class PuzzleSession internal constructor(
         changed()
         if (section != ConfigSection.PREFS) {
           setBusy(true)
-          startNewGame()
+          // Only the settings section asks for a *kind* of game. The seed and description sections
+          // name one, which a pre-generated game would not be.
+          startNewGame(fromSource = section == ConfigSection.SETTINGS)
           applySize()
           applyPalette()
           forceRedraw()

@@ -83,10 +83,18 @@ class PuzzleEngine private constructor(
     }
   }
 
+  /**
+   * Pre-generated games for sessions to start from instead of generating. Set once by whoever owns
+   * the engine; a session consults it afresh for each new game, so setting it late is fine. Leave
+   * it null on an engine that fills the source, or it would be taking from itself.
+   */
+  @Volatile
+  var newGameSource: NewGameSource? = null
+
   /** Creates a fresh mid-end for `games[index]`. The caller owns the returned session. */
   suspend fun openGame(index: Int): PuzzleSession {
     val me = engineThread.run { midend.midendNew(index) }
-    return PuzzleSession(engineThread, hooks, midend, me, games[index])
+    return PuzzleSession(engineThread, hooks, midend, me, games[index]) { newGameSource }
   }
 
   /** Shuts down the engine thread; any [PuzzleSession]s still open become unusable. */

@@ -70,7 +70,8 @@ data class CustomPresets(
   val byGame: Map<String, List<CustomPreset>> = emptyMap(),
 )
 
-private fun ConfigField.storedField() =
+/** This field as [CustomPreset] and the pre-generated pool identify it: by label, choices by label. */
+fun ConfigField.storedField() =
   StoredField(name, if (this is ConfigField.Text) value else settingValue().orEmpty())
 
 /**
@@ -157,12 +158,21 @@ private object CustomPresetsSerializer : Serializer<CustomPresets> {
  */
 class CustomPresetStore(
   private val store: DataStore<CustomPresets>,
+  /**
+   * Told about each preset pushed out of a game's list, so that whatever was kept for it (the
+   * pre-generated games) can go too rather than lingering until some later sweep.
+   */
+  private val onEvicted: (gameName: String, preset: CustomPreset) -> Unit = { _, _ -> },
 ) {
   constructor(
     file: File,
     scope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.IO),
+    onEvicted: (String, CustomPreset) -> Unit = { _, _ -> },
   ) :
-    this(DataStoreFactory.create(CustomPresetsSerializer, scope = scope) { file })
+    this(DataStoreFactory.create(CustomPresetsSerializer, scope = scope) { file }, onEvicted)
+
+  /** Every game's presets, for anything that must react to any of them changing. */
+  val all: Flow<CustomPresets> get() = store.data
 
   fun presets(gameName: String): Flow<List<CustomPreset>> =
     store.data.map { it.byGame[gameName].orEmpty() }
@@ -173,13 +183,17 @@ class CustomPresetStore(
     fields: List<ConfigField>,
   ) {
     val stored = fields.map { it.storedField() }
+    var evicted = emptyList<CustomPreset>()
     store.updateData { all ->
       val existing = all.byGame[gameName].orEmpty()
       val preset =
         existing.firstOrNull { it.fields == stored } ?: CustomPreset(fields.customTitle(), stored)
-      val updated = (listOf(preset) + existing.filter { it !== preset }).take(MAX_PER_GAME)
+      val ordered = listOf(preset) + existing.filter { it !== preset }
+      val updated = ordered.take(MAX_PER_GAME)
+      evicted = ordered.drop(MAX_PER_GAME)
       all.copy(byGame = all.byGame + (gameName to updated))
     }
+    evicted.forEach { onEvicted(gameName, it) }
   }
 
   companion object {

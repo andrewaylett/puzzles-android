@@ -21,17 +21,30 @@ import android.util.Log
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.asSharedFlow
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.debounce
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import uk.aylett.puzzles.data.AppPreferences
 import uk.aylett.puzzles.data.CustomPresetStore
 import uk.aylett.puzzles.engine.PuzzleEngine
+import uk.aylett.puzzles.pool.AndroidPowerState
+import uk.aylett.puzzles.pool.PoolKey
+import uk.aylett.puzzles.pool.PoolPolicy
+import uk.aylett.puzzles.pool.PoolScheduler
+import uk.aylett.puzzles.pool.PuzzlePool
+import uk.aylett.puzzles.pool.Refill
 import java.io.File
+
+private const val POOL_REQUEST_DEBOUNCE_MS = 5_000L
 
 /**
  * What a ViewModel needs from the process-wide engine owner. An interface so that ViewModels can
@@ -75,7 +88,49 @@ class PuzzlesApplication :
    * has its own ViewModel.
    */
   val customPresetStore: CustomPresetStore by lazy {
-    CustomPresetStore(File(filesDir, "custom_presets.json"), applicationScope)
+    CustomPresetStore(File(filesDir, "custom_presets.json"), applicationScope) { game, preset ->
+      // Dropping off the list means nothing will ask for these games again.
+      puzzlePool.discard(PoolKey(game, preset.fields))
+    }
+  }
+
+  private val poolScheduler by lazy { PoolScheduler(this) }
+
+  /**
+   * Games generated ahead of time. Excluded from backup, as it is bulk that can be regenerated and
+   * says nothing about the player. Process-wide because the engine thread reads it while the worker
+   * writes it, and they must agree on the one lock.
+   */
+  val puzzlePool: PuzzlePool by lazy {
+    PuzzlePool(
+      File(noBackupFilesDir, "pregenerated"),
+      onEmptied = { key ->
+        // Decided now, not at start-up: the player may have plugged in or unplugged since.
+        when (PoolPolicy.refillAfterEmptied(AndroidPowerState(this))) {
+          Refill.FILL_ALL -> poolScheduler.requestFill()
+          Refill.TOP_UP_ONE -> poolScheduler.requestTopUp(key)
+          Refill.NONE -> Unit
+        }
+      },
+      // A game had to be generated while the player waited, e.g. on a fresh install. Ask for a
+      // fill, which waits for the charger like any other; nothing is made on battery for this.
+      onMissed = { poolScheduler.requestFill() },
+    )
+  }
+
+  @OptIn(FlowPreview::class)
+  override fun onCreate() {
+    super.onCreate()
+    poolScheduler.schedulePeriodicFill()
+    // The targets depend on which games are favourites and on the custom types in use, so a change
+    // to either may mean pools to fill. The debounce lets a burst of edits settle into one request.
+    applicationScope.launch {
+      combine(AppPreferences(this@PuzzlesApplication).favourites, customPresetStore.all) { f, c ->
+        f to c
+      }.distinctUntilChanged()
+        .debounce(POOL_REQUEST_DEBOUNCE_MS)
+        .collect { poolScheduler.requestFill() }
+    }
   }
 
   private val engineMutex = Mutex()
@@ -97,8 +152,9 @@ class PuzzlesApplication :
       engineMutex.withLock {
         engineDeferred
           ?: applicationScope
-            .async { PuzzleEngine.create(this@PuzzlesApplication) }
-            .also { engineDeferred = it }
+            .async {
+              PuzzleEngine.create(this@PuzzlesApplication).also { it.newGameSource = puzzlePool }
+            }.also { engineDeferred = it }
       }
     return deferred.await()
   }

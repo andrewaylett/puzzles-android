@@ -19,7 +19,8 @@ Consequences worth internalising:
   translate input, size the canvas, or service a drawing callback — not in the puzzle.
 - **One WASM module covers all 40 puzzles** (`wasmmid_game_count`/`wasmmid_game_at`), so there is a
   single blob and a single engine, not forty.
-- **No runtime permissions, ever.** Everything happens in-process; file import/export uses the
+- **No runtime permissions, ever** (and no `INTERNET`; the only install-time ones are WorkManager's,
+  see *Pre-generated games*). Everything happens in-process; file import/export uses the
   Storage Access Framework, which grants access per-document without a permission.
 
 ## Build pipeline
@@ -330,6 +331,43 @@ What is accepted as lost on an instant kill is one debounce interval. Details wo
   leaving: an autosave just after restoring proves serialising works, not that drawing does.
 - Timed puzzles serialise their elapsed time, so "ticks never change a save" is approximately true;
   the pause flush covers it.
+
+## Pre-generated games
+
+Generation can take many seconds, so games are made ahead of time and kept in `PuzzlePool`
+(`noBackupFilesDir/pregenerated`), and a new game is started from one when it can be.
+
+- **Stored as saves, not game ids.** A save keeps the seed and the solver's auxiliary data; a game id
+  loses the latter, and Netslide and Untangle then answer Solve with "Solution not known"
+  (`WasmInstantiationTest` pins this down). Mines generates lazily on the first click, so there is
+  nothing to keep ahead of time for it; it is harmless there.
+- **Keyed by the settings actually in force**, as `PoolKey`: the settings section as `StoredField`s,
+  by label, which is how custom types are identified too. Not by preset id (an index, and presets
+  are transposed for portrait) and not by game id (varies with every game).
+- **Consumed by `PuzzleSession.startNewGame(fromSource = true)`**, from New game, a preset and the
+  settings section of the config dialog. Not for a game id, a seed or a description, which name a
+  particular game, and not for Restart. The entry is deleted *before* it is used, so a save that traps
+  the engine cannot be offered again; one the mid-end merely rejects falls through to generating.
+- **Filled by `PoolWorker`, on an engine of its own.** The shared engine thread runs one thing at a
+  time and a generation can take many seconds, so filling it there would queue the player's next tap
+  behind a puzzle nobody asked for. That engine has no `newGameSource`, or it would take from what
+  it is filling. An `EngineFailure` abandons that game for the pass and carries on on a fresh engine.
+- **Targets**: every preset (all submenus), the game's default parameters and the stored custom
+  types; 20 per kind for favourites, 10 for the rest (`PoolPolicy`). Favourites are done first.
+  `PuzzlePool.retain` removes kinds that are no longer wanted and trims over-full ones, per game and
+  only once that game was enumerated in full.
+- **When**: WorkManager, constrained to charging (periodically, and whenever favourites or custom
+  types change). When a pool is emptied by a game being taken, `PoolPolicy.refillAfterEmptied`
+  decides then: charging fills everything, on battery makes exactly one replacement, power saving
+  mode does nothing. A take that finds the pool empty (a fresh install) generates synchronously as
+  before and also requests a fill, which still waits for the charger. WorkManager was chosen over `JobScheduler` to survive reboots, at the price of
+  its merged-manifest permissions: `WAKE_LOCK` and `RECEIVE_BOOT_COMPLETED` remain, while
+  `ACCESS_NETWORK_STATE` and `FOREGROUND_SERVICE` are removed with `tools:node="remove"`, because the
+  goal is a permission list that cannot be read as tracking or reporting back.
+- **Custom types clean up after themselves**: `CustomPresetStore` reports each preset that falls off
+  the three-entry list and `PuzzlePool.discard` removes its games at once; `retain` is only the
+  backstop.
+- Excluded from backup: it is bulk, regenerable and says nothing about the player.
 
 ## Custom types
 

@@ -16,12 +16,31 @@
   -->
 
 <!--
-  No <uses-permission> entries: everything the engine does is in-process, and file
+  No <uses-permission> entries of our own: everything the engine does is in-process, and file
   import/export uses the Storage Access Framework, which needs none. Keep it that way.
   Failure reports are shared through a FileProvider, which grants one file per share and
   needs no permission either.
+
+  The only permissions in the merged manifest come from WorkManager, which runs the
+  pre-generation of puzzles while charging (see PoolWorker): WAKE_LOCK and
+  RECEIVE_BOOT_COMPLETED. They are install-time, not runtime, and neither is a network
+  permission; the app still has no INTERNET.
 -->
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest
+  xmlns:android="http://schemas.android.com/apk/res/android"
+  xmlns:tools="http://schemas.android.com/tools">
+
+  <!--
+    WorkManager declares these for features we do not use (network-constrained work and
+    foreground-service workers). Removed so that the app asks for nothing that could be read as
+    reaching out: it must be obvious that it neither tracks the player nor reports back.
+  -->
+  <uses-permission
+    android:name="android.permission.ACCESS_NETWORK_STATE"
+    tools:node="remove" />
+  <uses-permission
+    android:name="android.permission.FOREGROUND_SERVICE"
+    tools:node="remove" />
 
   <application
     android:name=".PuzzlesApplication"

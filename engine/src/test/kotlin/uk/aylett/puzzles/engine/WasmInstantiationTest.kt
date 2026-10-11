@@ -17,6 +17,7 @@ package uk.aylett.puzzles.engine
 
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
+import org.junit.jupiter.api.Assertions.assertNotNull
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 
@@ -48,6 +49,39 @@ class WasmInstantiationTest {
       assertEquals(0, midend.status(me))
     } finally {
       midend.midendFree(me)
+    }
+  }
+
+  /**
+   * The pre-generated pool stores saves rather than game ids. This pins down why: a save carries the
+   * solver's auxiliary information, a bare game id does not, so only the former can still be solved
+   * by games that cannot re-derive the answer (Netslide and Untangle).
+   */
+  @Test
+  fun `a serialised new game keeps its id and can still be solved`() {
+    val netslide =
+      (0 until midend.gameCount()).first {
+        midend.gameName(midend.gameAt(it)) ==
+          "Netslide"
+      }
+    val generated = midend.midendNew(netslide)
+    val restored = midend.midendNew(netslide)
+    val fromId = midend.midendNew(netslide)
+    try {
+      midend.newGame(generated)
+      val id = midend.getGameId(generated)
+
+      assertEquals(null, midend.deserialise(restored, midend.serialise(generated)))
+      assertEquals(id, midend.getGameId(restored))
+      assertEquals(null, midend.solve(restored))
+
+      assertEquals(null, midend.gameId(fromId, id))
+      midend.newGame(fromId)
+      assertNotNull(midend.solve(fromId), "a game id alone loses the solution")
+    } finally {
+      midend.midendFree(generated)
+      midend.midendFree(restored)
+      midend.midendFree(fromId)
     }
   }
 }
