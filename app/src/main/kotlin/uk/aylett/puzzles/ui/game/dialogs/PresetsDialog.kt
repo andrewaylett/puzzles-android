@@ -34,6 +34,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import uk.aylett.puzzles.R
+import uk.aylett.puzzles.data.CustomPreset
 import uk.aylett.puzzles.engine.PresetEntry
 
 private data class FlatEntry(
@@ -62,13 +63,17 @@ private fun flatten(
  * The "Type" menu: a tree of presets (several games nest a difficulty under a size, or similar),
  * flattened here into an indented list since a tree control would be overkill for at most two
  * levels. "Custom…" lives at the end of the list because it is just another way of choosing a
- * type, and is null when the game has no configurable parameters.
+ * type, and is null when the game has no configurable parameters. The [customPresets] the user
+ * chose most recently sit just above it, so that repeating one does not mean retyping it.
  */
 @Composable
 fun PresetsDialog(
   presets: List<PresetEntry>,
   currentPresetId: Int,
+  customPresets: List<CustomPreset>,
+  currentCustom: CustomPreset?,
   onSelect: (Int) -> Unit,
+  onSelectCustom: (CustomPreset) -> Unit,
   onCustom: (() -> Unit)?,
   onDismiss: () -> Unit,
 ) {
@@ -105,6 +110,25 @@ fun PresetsDialog(
               Spacer(modifier = Modifier.width(32.dp))
             }
             Text(entry.title)
+          }
+        }
+        items(customPresets) { preset ->
+          Row(
+            modifier =
+              Modifier
+                .fillMaxWidth()
+                .clickable {
+                  onSelectCustom(preset)
+                  onDismiss()
+                }.padding(start = 16.dp, top = 12.dp, bottom = 12.dp, end = 16.dp),
+          ) {
+            if (preset == currentCustom) {
+              Icon(Icons.Filled.Check, contentDescription = null)
+              Spacer(modifier = Modifier.width(8.dp))
+            } else {
+              Spacer(modifier = Modifier.width(32.dp))
+            }
+            Text(preset.title)
           }
         }
         if (onCustom != null) {

@@ -45,6 +45,7 @@ import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 import uk.aylett.puzzles.EngineProvider
 import uk.aylett.puzzles.data.AppPreferences
+import uk.aylett.puzzles.data.CustomPresetStore
 import uk.aylett.puzzles.data.FailureReport
 import uk.aylett.puzzles.data.RecoveryStore
 import uk.aylett.puzzles.data.SavedGameStore
@@ -115,6 +116,8 @@ class GameViewModelTest {
       coEvery { save(any(), any()) } returns Unit
     }
 
+  private val customPresets = mockk<CustomPresetStore>(relaxUnitFun = true)
+
   private val recovery =
     mockk<RecoveryStore>(relaxUnitFun = true) {
       coEvery { wasRestoring(any()) } returns false
@@ -162,7 +165,7 @@ class GameViewModelTest {
     Dispatchers.resetMain()
   }
 
-  private fun viewModel() = GameViewModel(engines, 0, prefs, saves, recovery)
+  private fun viewModel() = GameViewModel(engines, 0, prefs, saves, recovery, customPresets)
 
   @Test
   fun `onResume while the first open is still waiting for the engine opens only one session`() =
@@ -566,5 +569,36 @@ class GameViewModelTest {
       vm.applyConfig(ConfigSection.PREFS, listOf(toggle))
 
       coVerify { prefs.setSharedSettings(mapOf(toggle.settingId()!! to "true")) }
+    }
+
+  @Test
+  fun `custom settings that no built-in type describes are remembered`() =
+    runTest(dispatcher) {
+      val fields = listOf(ConfigField.Text("Width", "", "11"))
+      engineReady.complete(engine)
+      val vm = viewModel()
+      advanceUntilIdle()
+      val session = openedSessions.single()
+      coEvery { session.applyConfig(any(), any()) } returns null
+      coEvery { session.currentPresetId() } returns -1
+
+      vm.applyConfig(ConfigSection.SETTINGS, fields)
+
+      coVerify { customPresets.use("Test", fields) }
+    }
+
+  @Test
+  fun `custom settings that match a built-in type are not remembered`() =
+    runTest(dispatcher) {
+      engineReady.complete(engine)
+      val vm = viewModel()
+      advanceUntilIdle()
+      val session = openedSessions.single()
+      coEvery { session.applyConfig(any(), any()) } returns null
+      coEvery { session.currentPresetId() } returns 2
+
+      vm.applyConfig(ConfigSection.SETTINGS, listOf(ConfigField.Text("Width", "", "10")))
+
+      coVerify(exactly = 0) { customPresets.use(any(), any()) }
     }
 }

@@ -31,6 +31,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.android.awaitFrame
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -38,6 +39,7 @@ import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
@@ -46,6 +48,8 @@ import kotlinx.coroutines.withContext
 import uk.aylett.puzzles.EngineProvider
 import uk.aylett.puzzles.PuzzlesApplication
 import uk.aylett.puzzles.data.AppPreferences
+import uk.aylett.puzzles.data.CustomPreset
+import uk.aylett.puzzles.data.CustomPresetStore
 import uk.aylett.puzzles.data.FailureReport
 import uk.aylett.puzzles.data.RecoveryStore
 import uk.aylett.puzzles.data.SavedGameStore
@@ -94,6 +98,7 @@ class GameViewModel(
   private val prefsStore: AppPreferences,
   private val savedGameStore: SavedGameStore,
   private val recoveryStore: RecoveryStore,
+  private val customPresetStore: CustomPresetStore,
 ) : ViewModel() {
   private val _state = MutableStateFlow(GameUiState())
   val state: StateFlow<GameUiState> = _state.asStateFlow()
@@ -593,11 +598,28 @@ class GameViewModel(
   suspend fun config(section: Int): ConfigForm? =
     guarded("reading the configuration", null) { it.config(section) }
 
+  /** The custom types most recently used in this game, newest first. */
+  fun customPresets(): Flow<List<CustomPreset>> =
+    gameName?.let(customPresetStore::presets) ?: flowOf(emptyList())
+
+  /** Switches to a custom type from [customPresets], which also makes it the most recent. */
+  suspend fun applyCustomPreset(preset: CustomPreset): String? {
+    val current = config(ConfigSection.SETTINGS) ?: return null
+    return applyConfig(ConfigSection.SETTINGS, preset.applyTo(current.fields))
+  }
+
   suspend fun applyConfig(
     section: Int,
     fields: List<ConfigField>,
   ): String? {
     val error = guarded("applying the configuration", null) { it.applyConfig(section, fields) }
+    // Only parameters that no built-in type already describes are worth a shortcut of their own.
+    val name = gameName
+    if (error == null && section == ConfigSection.SETTINGS && name != null &&
+      currentPresetId() == -1
+    ) {
+      customPresetStore.use(name, fields)
+    }
     // Preferences are app-wide where games share them, so record the choice for every game rather
     // than leaving it in this game's blob alone.
     if (error == null && section == ConfigSection.PREFS) {
@@ -664,6 +686,7 @@ class GameViewModel(
             AppPreferences(application),
             SavedGameStore(application),
             RecoveryStore(application),
+            application.customPresetStore,
           ) as T
         }
       }

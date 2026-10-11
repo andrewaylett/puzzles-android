@@ -29,7 +29,9 @@ import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import uk.aylett.puzzles.data.CustomPresetStore
 import uk.aylett.puzzles.engine.PuzzleEngine
+import java.io.File
 
 /**
  * What a ViewModel needs from the process-wide engine owner. An interface so that ViewModels can
@@ -67,6 +69,14 @@ class PuzzlesApplication :
   Application(),
   EngineProvider {
   override val applicationScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+
+  /**
+   * Process-wide because a DataStore must have exactly one instance per file, and every game screen
+   * has its own ViewModel.
+   */
+  val customPresetStore: CustomPresetStore by lazy {
+    CustomPresetStore(File(filesDir, "custom_presets.json"), applicationScope)
+  }
 
   private val engineMutex = Mutex()
   private var engineDeferred: Deferred<PuzzleEngine>? = null

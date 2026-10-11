@@ -331,6 +331,24 @@ What is accepted as lost on an instant kill is one debounce interval. Details wo
 - Timed puzzles serialise their elapsed time, so "ticks never change a save" is approximately true;
   the pause flush covers it.
 
+## Custom types
+
+Applying the Custom dialog's settings stores them as a `CustomPreset` (`CustomPresetStore`), newest
+first, three per game, shown in the Type dialog above "Custom…". Picking one moves it to the front.
+
+- **It is a typed DataStore of its own**, JSON via kotlinx.serialization, not more keys in
+  `AppPreferences`: the value is a nested list that is replaced as a whole, which flat keys can
+  only do by hiding JSON in a string. A DataStore must be the only one on its file, so the store is
+  a process-wide singleton on `PuzzlesApplication`, not built per ViewModel.
+- **Fields are matched by label, choices stored by label**, as for shared settings. Settings items
+  have no keyword (see `readConfigFields`), so the label is the only identity there is.
+- **The title is generated from the values** (`customTitle`: `9x9, Mines 10, Ensure solubility`)
+  and stored as written; the mid-end only names its own presets.
+- **Parameters a built-in type already describes are not stored** (`currentPresetId() != -1` after
+  applying): they would only duplicate a row that is already in the list.
+- A corrupt file reads as empty rather than throwing; losing three shortcuts must not stop a game
+  screen opening.
+
 ## Dark mode and game colours
 
 The mid-end hands us each game's palette as anonymous indices (`midend_colours`); nothing says which

@@ -75,6 +75,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import kotlinx.coroutines.launch
 import uk.aylett.puzzles.R
 import uk.aylett.puzzles.engine.ColourScheme
+import uk.aylett.puzzles.engine.ConfigField
 import uk.aylett.puzzles.engine.ConfigForm
 import uk.aylett.puzzles.engine.ConfigSection
 import uk.aylett.puzzles.engine.FILL_PENCIL_MARKS_BUTTON
@@ -364,14 +365,26 @@ fun GameScreen(
     ActiveDialog.PRESETS -> {
       var presets by remember { mutableStateOf<List<PresetEntry>>(emptyList()) }
       var currentId by remember { mutableStateOf(-1) }
+      var currentSettings by remember { mutableStateOf<List<ConfigField>>(emptyList()) }
+      val customPresets by remember { viewModel.customPresets() }.collectAsState(emptyList())
       LaunchedEffect(Unit) {
         presets = viewModel.presets()
         currentId = viewModel.currentPresetId()
+        currentSettings = viewModel.config(ConfigSection.SETTINGS)?.fields.orEmpty()
       }
       PresetsDialog(
         presets = presets,
         currentPresetId = currentId,
+        customPresets = customPresets,
+        currentCustom =
+          customPresets.firstOrNull {
+            currentId == -1 &&
+              it.matches(
+                currentSettings,
+              )
+          },
         onSelect = { viewModel.applyPreset(it) },
+        onSelectCustom = { preset -> scope.launch { viewModel.applyCustomPreset(preset) } },
         onCustom =
           if (uiState.game?.canConfigure == true) {
             { activeDialog = ActiveDialog.SETTINGS }
