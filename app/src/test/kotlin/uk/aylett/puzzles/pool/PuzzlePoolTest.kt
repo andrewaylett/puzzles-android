@@ -130,4 +130,33 @@ class PuzzlePoolTest {
     assertEquals(0, pool.count(key))
     assertEquals(1, pool.count(other))
   }
+
+  @Test
+  fun `the summary says what each pool is for, and does not count its key as a game`() {
+    pool.put(key, byteArrayOf(1, 2, 3))
+    pool.put(key, byteArrayOf(4))
+    pool.put(PoolKey.of("Train Tracks", size("6")), byteArrayOf(5))
+
+    val summary = pool.summary()
+
+    assertEquals(setOf("Solo", "Train_Tracks"), summary.keys)
+    assertEquals(listOf(PoolKindSummary(key, 2, 4)), summary.getValue("Solo"))
+    assertEquals("Train_Tracks", pool.directoryName("Train Tracks"))
+    // Handing games out is unaffected by the key beside them.
+    assertEquals(2, pool.count(key))
+    assertArrayEquals(byteArrayOf(1, 2, 3), pool.take("Solo", size("9")))
+  }
+
+  @Test
+  fun `a pool from before keys were recorded is still counted, as of unknown kind`() {
+    pool.put(key, byteArrayOf(1))
+    File(dir, "Solo/${key.id}/key.json").delete()
+
+    assertEquals(listOf(PoolKindSummary(null, 1, 1)), pool.summary().getValue("Solo"))
+  }
+
+  @Test
+  fun `an empty pool summarises as nothing`() {
+    assertEquals(emptyMap<String, List<PoolKindSummary>>(), pool.summary())
+  }
 }

@@ -17,6 +17,7 @@ package uk.aylett.puzzles
 
 import android.app.Application
 import android.content.ComponentCallbacks2
+import android.os.SystemClock
 import android.util.Log
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Deferred
@@ -25,8 +26,11 @@ import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
 import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
+import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.flow.distinctUntilChanged
@@ -94,7 +98,7 @@ class PuzzlesApplication :
     }
   }
 
-  private val poolScheduler by lazy { PoolScheduler(this) }
+  val poolScheduler by lazy { PoolScheduler(this) }
 
   /**
    * Games generated ahead of time. Excluded from backup, as it is bulk that can be regenerated and
@@ -143,6 +147,20 @@ class PuzzlesApplication :
   private val _engineInvalidated = MutableSharedFlow<Unit>(extraBufferCapacity = 1)
   override val engineInvalidated: SharedFlow<Unit> = _engineInvalidated.asSharedFlow()
 
+  private val _engineStatus = MutableStateFlow<EngineStatus>(EngineStatus.NotLoaded())
+
+  /**
+   * The puzzles' names, once an engine has been built in this process and for good after that: the
+   * module's list never changes, so it outlives the engine, and the status screen can still name
+   * games while the engine is gone. Empty until the first engine exists.
+   */
+  @Volatile
+  var knownGameNames: List<String> = emptyList()
+    private set
+
+  /** For the status screen. Reading it never creates the engine, unlike [engine]. */
+  val engineStatus: StateFlow<EngineStatus> = _engineStatus.asStateFlow()
+
   /**
    * Returns the process's [PuzzleEngine], creating it lazily on first use or after
    * [onTrimMemory] discarded a previous instance.
@@ -152,11 +170,30 @@ class PuzzlesApplication :
       engineMutex.withLock {
         engineDeferred
           ?: applicationScope
-            .async {
-              PuzzleEngine.create(this@PuzzlesApplication).also { it.newGameSource = puzzlePool }
-            }.also { engineDeferred = it }
+            .async { createEngine() }
+            .also { engineDeferred = it }
       }
     return deferred.await()
+  }
+
+  private suspend fun createEngine(): PuzzleEngine {
+    _engineStatus.value = EngineStatus.Loading
+    val started = SystemClock.elapsedRealtime()
+    return try {
+      PuzzleEngine.create(this).also {
+        it.newGameSource = puzzlePool
+        knownGameNames = it.games.map { game -> game.name }
+        _engineStatus.value =
+          EngineStatus.Ready(
+            games = it.games.size,
+            loadMillis = SystemClock.elapsedRealtime() - started,
+            sinceMillis = System.currentTimeMillis(),
+          )
+      }
+    } catch (e: Exception) {
+      _engineStatus.value = EngineStatus.Failed(e.toString())
+      throw e
+    }
   }
 
   override suspend fun discardEngine(failed: PuzzleEngine) {
@@ -167,6 +204,7 @@ class PuzzlesApplication :
         val current = engineDeferred
         if (current != null && current.isCompleted && current.await() === failed) {
           engineDeferred = null
+          _engineStatus.value = EngineStatus.NotLoaded(EngineEnd.BROKE)
           failed
         } else {
           null
@@ -195,6 +233,7 @@ class PuzzlesApplication :
     if (level < ComponentCallbacks2.TRIM_MEMORY_UI_HIDDEN) return
     applicationScope.launch {
       val stale = engineMutex.withLock { engineDeferred.also { engineDeferred = null } }
+      if (stale != null) _engineStatus.value = EngineStatus.NotLoaded(EngineEnd.TRIMMED)
       _engineInvalidated.emit(Unit)
       // If creating that engine failed there is nothing to close, and rethrowing here would take
       // the whole process down while it is backgrounded, for no benefit: the next engine() call

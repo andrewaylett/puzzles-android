@@ -387,6 +387,27 @@ first, three per game, shown in the Type dialog above "Custom…". Picking one m
 - A corrupt file reads as empty rather than throwing; losing three shortcuts must not stop a game
   screen opening.
 
+## App status screen
+
+"App status" (list menu) shows what the app holds and is doing: the engine, the generation jobs,
+pool and save sizes, recovery leftovers and, per puzzle, its save, pool and custom types. It exists
+because most of that state is invisible by design (a pool fills overnight, a restore marker only
+matters at launch), so "why was that slow?" had no answer short of the file system.
+
+- **It must only look.** `engines.engine()` builds the WASM instance if it was trimmed, so asking it
+  for the game list would change what the screen reports. `PuzzlesApplication.engineStatus` is
+  published for this, and `knownGameNames` outlives the engine so the screen can name puzzles
+  while it is gone. Before any engine exists in the process, names come from whatever the stores
+  mention.
+- **The pool records its key beside its games** (`key.json` in each kind's directory). Directory
+  names are a hash and a sanitised title, which cannot be turned back into a game and settings. A
+  pool from before this has no file and shows as "unknown kind"; it is regenerable, so there is no
+  migration.
+- **Disk counts are polled** (every few seconds while the screen shows) as they have no flow;
+  WorkManager's state is live. `PoolWorker` reports its game and count as progress purely for this
+  screen. The periodic job is found by unique name, not tag, as it is enqueued with `KEEP` and an
+  existing install never sees a changed request.
+
 ## Dark mode and game colours
 
 The mid-end hands us each game's palette as anonymous indices (`midend_colours`); nothing says which

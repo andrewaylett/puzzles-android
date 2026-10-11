@@ -16,6 +16,7 @@
 package uk.aylett.puzzles.pool
 
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.json.Json
 import uk.aylett.puzzles.data.StoredField
 import uk.aylett.puzzles.data.storedField
 import uk.aylett.puzzles.engine.ConfigField
@@ -60,6 +61,14 @@ data class PoolKey(
   }
 }
 
+/** What [PuzzlePool.summary] found for one kind of game. */
+data class PoolKindSummary(
+  /** Null for a pool written before the key was recorded beside it; the games are still good. */
+  val key: PoolKey?,
+  val games: Int,
+  val bytes: Long,
+)
+
 /**
  * Games generated ahead of time and kept on disk, one save each, so that starting a game need not
  * wait for the generator.
@@ -85,7 +94,7 @@ class PuzzlePool(
 ) : NewGameSource {
   private val lock = Any()
 
-  private fun keyDir(key: PoolKey) = File(File(dir, key.game.replace(UNSAFE, "_")), key.id)
+  private fun keyDir(key: PoolKey) = File(File(dir, directoryName(key.game)), key.id)
 
   private fun games(keyDir: File): List<File> =
     keyDir.listFiles { f -> f.name.endsWith(SUFFIX) }?.sortedBy { it.name }.orEmpty()
@@ -99,6 +108,12 @@ class PuzzlePool(
     synchronized(lock) {
       val target = keyDir(key)
       target.mkdirs()
+      // The directory names are a hash and a sanitised title, neither of which can be turned back
+      // into a key, so the status screen could not say what a pool is for without this.
+      val keyFile = File(target, KEY_FILE)
+      if (!keyFile.exists()) {
+        keyFile.writeText(Json.encodeToString(PoolKey.serializer(), key))
+      }
       // Oldest first when taking, so a game does not sit for ever behind newer ones.
       val name = "${System.currentTimeMillis()}-${UUID.randomUUID()}"
       val temp = File(target, "$name.tmp")
@@ -138,6 +153,37 @@ class PuzzlePool(
     return taken.first
   }
 
+  /**
+   * What is kept, by the directory name each puzzle's pools are filed under (see [directoryName]).
+   * For diagnostics: it reads the disk under the lock, so the engine thread's [take] waits for it.
+   */
+  fun summary(): Map<String, List<PoolKindSummary>> =
+    synchronized(lock) {
+      dir
+        .listFiles { f -> f.isDirectory }
+        .orEmpty()
+        .associate { gameDir ->
+          gameDir.name to
+            gameDir.listFiles { f -> f.isDirectory }.orEmpty().map { keyDir ->
+              val saves = games(keyDir)
+              PoolKindSummary(
+                key =
+                  runCatching {
+                    Json.decodeFromString(
+                      PoolKey.serializer(),
+                      File(keyDir, KEY_FILE).readText(),
+                    )
+                  }.getOrNull(),
+                games = saves.size,
+                bytes = saves.sumOf { it.length() },
+              )
+            }
+        }
+    }
+
+  /** The name [summary] files [game]'s pools under, which is not [game] itself. */
+  fun directoryName(game: String): String = game.replace(UNSAFE, "_")
+
   /** Throws away every game kept for [key], for a kind that is no longer wanted. */
   fun discard(key: PoolKey) {
     synchronized(lock) { keyDir(key).deleteRecursively() }
@@ -154,7 +200,7 @@ class PuzzlePool(
     wanted: Map<String, Int>,
   ) {
     synchronized(lock) {
-      File(dir, game.replace(UNSAFE, "_")).listFiles()?.forEach { keyDir ->
+      File(dir, directoryName(game)).listFiles()?.forEach { keyDir ->
         val limit = wanted[keyDir.name]
         if (limit == null) {
           keyDir.deleteRecursively()
@@ -167,6 +213,7 @@ class PuzzlePool(
 
   private companion object {
     const val SUFFIX = ".sav"
+    const val KEY_FILE = "key.json"
     val UNSAFE = Regex("[^A-Za-z0-9._-]")
   }
 }

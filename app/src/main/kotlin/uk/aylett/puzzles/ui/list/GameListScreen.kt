@@ -78,6 +78,7 @@ fun GameListScreen(
   onGameSelected: (Int) -> Unit,
   onOpenSettings: () -> Unit,
   onOpenAbout: () -> Unit,
+  onOpenStatus: () -> Unit,
   listState: LazyListState = rememberLazyListState(),
   viewModel: GameListViewModel =
     viewModel(
@@ -108,6 +109,13 @@ fun GameListScreen(
               onClick = {
                 menuExpanded = false
                 onOpenSettings()
+              },
+            )
+            DropdownMenuItem(
+              text = { Text(stringResource(R.string.action_app_status)) },
+              onClick = {
+                menuExpanded = false
+                onOpenStatus()
               },
             )
             DropdownMenuItem(

@@ -22,6 +22,12 @@ import java.io.File
 import java.nio.file.Files
 import java.nio.file.StandardCopyOption
 
+/** How big a stored save is and when it last changed. */
+data class SavedGameInfo(
+  val bytes: Long,
+  val lastModifiedMillis: Long,
+)
+
 /**
  * Persists one in-progress game per puzzle type to the app's private files directory, so leaving
  * the app or rotating the device does not lose progress. No permission is needed: this is
@@ -66,6 +72,16 @@ class SavedGameStore(
       )
     }
   }
+
+  /** Size and age of each of [gameNames]' saves, for those that have one. For diagnostics. */
+  suspend fun info(gameNames: Collection<String>): Map<String, SavedGameInfo> =
+    withContext(Dispatchers.IO) {
+      gameNames
+        .mapNotNull { name ->
+          val f = file(name)
+          if (f.exists()) name to SavedGameInfo(f.length(), f.lastModified()) else null
+        }.toMap()
+    }
 
   /** Removes and returns the save, for when it has proved unrestorable. */
   suspend fun take(gameName: String): ByteArray? =

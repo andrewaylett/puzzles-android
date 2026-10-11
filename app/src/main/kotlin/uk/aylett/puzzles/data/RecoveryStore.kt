@@ -39,6 +39,18 @@ data class FailureReport(
   val file: File? = null,
 )
 
+/** What [RecoveryStore] is holding, for diagnostics. */
+data class RecoverySummary(
+  /** Failure reports kept, at most the store's limit. */
+  val reports: Int,
+  /** Saves moved aside because they could not be restored. */
+  val quarantinedSaves: Int,
+  /** When the newest report was written, if there is one. */
+  val newestReportMillis: Long?,
+  /** Games whose restore started and never finished: the last launch died part way through one. */
+  val restoreMarkers: List<String>,
+)
+
 /**
  * Remembers failures, and whether a restore is in flight.
  *
@@ -57,7 +69,7 @@ class RecoveryStore(
   private val dir: File
     get() = File(context.filesDir, "recovery").also { it.mkdirs() }
 
-  private fun marker(gameName: String) = File(dir, "restoring-${sanitise(gameName)}")
+  private fun marker(gameName: String) = File(dir, "$MARKER_PREFIX${sanitise(gameName)}")
 
   private fun sanitise(name: String) = name.replace(Regex("[^A-Za-z0-9._-]"), "_")
 
@@ -71,6 +83,24 @@ class RecoveryStore(
 
   suspend fun wasRestoring(gameName: String): Boolean =
     withContext(Dispatchers.IO) { marker(gameName).exists() }
+
+  suspend fun summary(): RecoverySummary =
+    withContext(Dispatchers.IO) {
+      val files = dir.listFiles().orEmpty()
+      val reports = files.filter { it.name.endsWith(".txt") }
+      RecoverySummary(
+        reports = reports.size,
+        quarantinedSaves = files.count { it.name.endsWith(".sav") },
+        // The file name starts with the time it was recorded, see [record].
+        newestReportMillis =
+          reports.maxOfOrNull { it.name }?.substringBefore('-')?.toLongOrNull(),
+        restoreMarkers =
+          files
+            .filter { it.name.startsWith(MARKER_PREFIX) }
+            .map { it.readText() }
+            .sorted(),
+      )
+    }
 
   /**
    * Writes the report (and [save], if any) to storage and returns it for display.
@@ -127,6 +157,7 @@ class RecoveryStore(
   }
 
   private companion object {
+    const val MARKER_PREFIX = "restoring-"
     const val MAX_REPORTS = 5
     const val MAX_EMBEDDED_SAVE = 64 * 1024
   }

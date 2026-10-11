@@ -86,4 +86,17 @@ class RecoveryStoreTest {
       assertEquals(5, files(".sav").size)
       assertTrue(files(".txt").none { it.name.startsWith("1000-") })
     }
+
+  @Test
+  fun `the summary counts reports and saves, and names a restore that never finished`() =
+    runTest {
+      val s = store()
+      assertEquals(RecoverySummary(0, 0, null, emptyList()), s.summary())
+
+      s.record("Solo", "broke", "trace", byteArrayOf(1), true, nowMillis = 1_000)
+      s.record("Net", "broke", "trace", null, false, nowMillis = 2_000)
+      s.markRestoring("Train Tracks")
+
+      assertEquals(RecoverySummary(2, 1, 2_000L, listOf("Train Tracks")), s.summary())
+    }
 }

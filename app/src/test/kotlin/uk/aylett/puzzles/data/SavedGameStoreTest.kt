@@ -80,4 +80,16 @@ class SavedGameStoreTest {
       assertFalse(saved.single().contains('/'))
       assertEquals(0, dir.listFiles().orEmpty().count { it.isFile })
     }
+
+  @Test
+  fun infoReportsOnlyTheGamesThatHaveASave() =
+    runTest {
+      val s = store()
+      s.save("Solo", byteArrayOf(1, 2, 3))
+
+      val info = s.info(listOf("Solo", "Net"))
+
+      assertEquals(setOf("Solo"), info.keys)
+      assertEquals(3L, info.getValue("Solo").bytes)
+    }
 }

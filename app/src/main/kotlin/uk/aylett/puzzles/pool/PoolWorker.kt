@@ -19,6 +19,7 @@ import android.content.Context
 import android.util.Log
 import androidx.work.CoroutineWorker
 import androidx.work.WorkerParameters
+import androidx.work.workDataOf
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.first
@@ -228,6 +229,14 @@ class PoolWorker(
       // (the charger was unplugged) ends after at most the game in hand.
       currentCoroutineContext().ensureActive()
       pool.put(target.key, session.generateSave())
+      // Only for the status screen. Names the game, as that is what a person would recognise.
+      setProgress(
+        workDataOf(
+          PROGRESS_GAME to target.key.game,
+          PROGRESS_HAVE to pool.count(target.key),
+          PROGRESS_WANT to upTo,
+        ),
+      )
     }
   }
 
@@ -245,5 +254,8 @@ class PoolWorker(
     const val KEY = "key"
     const val FILL = "fill"
     const val TOP_UP = "top-up"
+    const val PROGRESS_GAME = "game"
+    const val PROGRESS_HAVE = "have"
+    const val PROGRESS_WANT = "want"
   }
 }

@@ -53,6 +53,7 @@ import uk.aylett.puzzles.ui.about.AboutScreen
 import uk.aylett.puzzles.ui.game.GameScreen
 import uk.aylett.puzzles.ui.list.GameListScreen
 import uk.aylett.puzzles.ui.settings.SettingsScreen
+import uk.aylett.puzzles.ui.status.AppStatusScreen
 import uk.aylett.puzzles.ui.theme.PuzzlesTheme
 
 private const val NO_GAME_SELECTED = -1
@@ -61,6 +62,7 @@ private const val NO_GAME_SELECTED = -1
 private const val SCREEN_LIST = 0
 private const val SCREEN_SETTINGS = 1
 private const val SCREEN_ABOUT = 2
+private const val SCREEN_STATUS = 3
 
 // How far the open game shrinks and slides during a predictive back gesture, per the platform's
 // own convention for revealing the previous screen (see the Compose predictive-back guide).
@@ -154,6 +156,11 @@ private fun PuzzlesApp() {
       AboutScreen(onBack = { menuScreen = SCREEN_LIST })
       return
     }
+
+    SCREEN_STATUS -> {
+      AppStatusScreen(onBack = { menuScreen = SCREEN_LIST })
+      return
+    }
   }
 
   Box(modifier = Modifier.fillMaxSize()) {
@@ -163,6 +170,7 @@ private fun PuzzlesApp() {
         onGameSelected = { selectedGame = it },
         onOpenSettings = { menuScreen = SCREEN_SETTINGS },
         onOpenAbout = { menuScreen = SCREEN_ABOUT },
+        onOpenStatus = { menuScreen = SCREEN_STATUS },
         listState = listState,
       )
     }
