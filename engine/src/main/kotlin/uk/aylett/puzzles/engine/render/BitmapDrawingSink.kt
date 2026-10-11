@@ -23,6 +23,7 @@ import android.graphics.PorterDuff
 import android.graphics.Rect
 import android.graphics.RectF
 import android.graphics.Typeface
+import androidx.core.graphics.createBitmap
 import uk.aylett.puzzles.engine.Align
 import uk.aylett.puzzles.engine.DrawingSink
 import uk.aylett.puzzles.engine.FontType
@@ -127,7 +128,7 @@ class BitmapDrawingSink(
     }
     this.scale = scale
     canvasScale = scale
-    val next = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
+    val next = createBitmap(width, height)
     bitmap = next
     canvas =
       Canvas(next).apply {
@@ -372,7 +373,7 @@ class BitmapDrawingSink(
     val handle = nextBlitterHandle++
     val safeWidth = (w * scale).coerceAtLeast(1)
     val safeHeight = (h * scale).coerceAtLeast(1)
-    blitters[handle] = Bitmap.createBitmap(safeWidth, safeHeight, Bitmap.Config.ARGB_8888)
+    blitters[handle] = createBitmap(safeWidth, safeHeight)
     return handle
   }
 

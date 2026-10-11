@@ -71,7 +71,7 @@ class GamePersisterTest {
 
       repeat(10) {
         revision.value++
-        advanceTimeBy(AUTOSAVE_DEBOUNCE_MS / 2)
+        advanceTimeBy(AUTOSAVE_DEBOUNCE_INTERVAL / 2)
       }
       advanceUntilIdle()
 

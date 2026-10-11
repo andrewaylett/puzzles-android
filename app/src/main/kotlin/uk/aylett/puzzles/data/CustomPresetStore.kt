@@ -23,6 +23,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import uk.aylett.puzzles.engine.ConfigField
@@ -144,7 +145,9 @@ private object CustomPresetsSerializer : Serializer<CustomPresets> {
     t: CustomPresets,
     output: OutputStream,
   ) {
-    output.write(json.encodeToString(CustomPresets.serializer(), t).encodeToByteArray())
+    withContext(Dispatchers.IO) {
+      output.write(json.encodeToString(CustomPresets.serializer(), t).encodeToByteArray())
+    }
   }
 }
 

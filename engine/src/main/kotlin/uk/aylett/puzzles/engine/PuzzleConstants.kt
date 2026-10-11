@@ -66,6 +66,7 @@ object FontType {
  * Text alignment flags, combined as a bitmask. The vertical and horizontal parts occupy different
  * bits, so a single `align` argument carries both.
  */
+@Suppress("unused")
 object Align {
   const val V_NORMAL = 0x000
   const val V_CENTRE = 0x100

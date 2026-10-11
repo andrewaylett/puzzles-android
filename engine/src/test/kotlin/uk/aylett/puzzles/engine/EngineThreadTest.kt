@@ -25,6 +25,7 @@ import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import java.util.concurrent.CountDownLatch
+import kotlin.time.Duration.Companion.milliseconds
 
 class EngineThreadTest {
   @Test
@@ -48,6 +49,6 @@ class EngineThreadTest {
     }
     thread.close()
     gate.countDown()
-    assertEquals("saved", runBlocking { withTimeout(5_000) { result.await() } })
+    assertEquals("saved", runBlocking { withTimeout(5_000.milliseconds) { result.await() } })
   }
 }

@@ -72,7 +72,7 @@ import uk.aylett.puzzles.engine.GameInfo
  * and state remembered here would go with it: the user would come back to the top of the list
  * every time.
  */
-@OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun GameListScreen(
   onGameSelected: (Int) -> Unit,

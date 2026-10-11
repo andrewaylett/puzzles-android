@@ -47,8 +47,9 @@ import uk.aylett.puzzles.pool.PoolScheduler
 import uk.aylett.puzzles.pool.PuzzlePool
 import uk.aylett.puzzles.pool.Refill
 import java.io.File
+import kotlin.time.Duration.Companion.milliseconds
 
-private const val POOL_REQUEST_DEBOUNCE_MS = 5_000L
+private val POOL_REQUEST_DEBOUNCE_MS = 5_000L.milliseconds
 
 /**
  * What a ViewModel needs from the process-wide engine owner. An interface so that ViewModels can
@@ -230,7 +231,7 @@ class PuzzlesApplication :
    */
   override fun onTrimMemory(level: Int) {
     super.onTrimMemory(level)
-    if (level < ComponentCallbacks2.TRIM_MEMORY_UI_HIDDEN) return
+    if (level < TRIM_MEMORY_UI_HIDDEN) return
     applicationScope.launch {
       val stale = engineMutex.withLock { engineDeferred.also { engineDeferred = null } }
       if (stale != null) _engineStatus.value = EngineStatus.NotLoaded(EngineEnd.TRIMMED)

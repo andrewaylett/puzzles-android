@@ -36,14 +36,16 @@ import uk.aylett.puzzles.engine.EngineFailure
 import uk.aylett.puzzles.engine.PuzzleSession
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicLong
+import kotlin.time.Duration
+import kotlin.time.Duration.Companion.milliseconds
 
 private const val LOG_TAG = "GamePersister"
 
 /** How long the game must sit unchanged before it is written down. */
-const val AUTOSAVE_DEBOUNCE_MS = 300L
+val AUTOSAVE_DEBOUNCE_INTERVAL = 300L.milliseconds
 
 /**
- * Keeps a game's save on disk within [debounceMs] of the player stopping, whatever the lifecycle
+ * Keeps a game's save on disk within [debounceInterval] of the player stopping, whatever the lifecycle
  * of the screen is doing.
  *
  * Saving only at lifecycle edges lost moves: swiping the app away from recents gives `onPause`, then
@@ -64,7 +66,7 @@ class GamePersister(
   private val onFailure: (PuzzleSession, EngineFailure) -> Unit,
   /** A save has been serialised, proving the game in the session sound enough to keep. */
   private val onSerialised: suspend () -> Unit,
-  private val debounceMs: Long = AUTOSAVE_DEBOUNCE_MS,
+  private val debounceInterval: Duration = AUTOSAVE_DEBOUNCE_INTERVAL,
 ) {
   private class Target(
     val session: PuzzleSession,
@@ -105,7 +107,7 @@ class GamePersister(
     // attached is saved too, if it turns out to differ from what was on disk.
     watcher =
       scope.launch {
-        session.revision.debounce(debounceMs).collect { launchSave(session, name) }
+        session.revision.debounce(debounceInterval).collect { launchSave(session, name) }
       }
   }
 

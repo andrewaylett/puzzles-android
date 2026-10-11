@@ -41,9 +41,10 @@ import uk.aylett.puzzles.data.SavedGameStore
 import uk.aylett.puzzles.pool.AndroidPowerState
 import uk.aylett.puzzles.pool.PoolJob
 import uk.aylett.puzzles.pool.PoolKindSummary
-import uk.aylett.puzzles.pool.PoolScheduler
 import uk.aylett.puzzles.pool.PowerState
 import uk.aylett.puzzles.pool.PuzzlePool
+import kotlin.time.Duration
+import kotlin.time.Duration.Companion.milliseconds
 
 /** Everything the app holds for one puzzle. */
 data class GameStatus(
@@ -146,7 +147,7 @@ fun buildAppStatus(input: AppStatusInputs): AppStatusUiState {
  * Backs the "App status" screen, which only ever *looks*: nothing here may start the engine, build
  * a pool or schedule work, or opening the screen would change what it reports.
  *
- * Counts on disk cannot be observed, so they are re-read every [pollMillis] while the screen is
+ * Counts on disk cannot be observed, so they are re-read every [pollInterval] while the screen is
  * showing, which also keeps a running fill's numbers moving. What has a flow of its own (the
  * engine, the jobs, favourites, custom types) is combined in as it changes.
  */
@@ -160,13 +161,13 @@ class AppStatusViewModel(
   private val engineStatus: Flow<EngineStatus>,
   private val jobs: Flow<List<PoolJob>>,
   private val gameNames: () -> List<String>,
-  pollMillis: Long = POLL_MILLIS,
+  pollInterval: Duration = POLL_INTERVAL,
 ) : ViewModel() {
   private val ticks =
     flow {
       while (true) {
         emit(Unit)
-        delay(pollMillis)
+        delay(pollInterval)
       }
     }
 
@@ -199,7 +200,7 @@ class AppStatusViewModel(
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), AppStatusUiState())
 
   companion object {
-    private const val POLL_MILLIS = 3_000L
+    private val POLL_INTERVAL = 3_000L.milliseconds
 
     fun factory(application: Application): ViewModelProvider.Factory =
       object : ViewModelProvider.Factory {

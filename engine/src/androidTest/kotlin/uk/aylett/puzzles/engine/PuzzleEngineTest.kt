@@ -24,6 +24,7 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
+import kotlin.time.Duration.Companion.milliseconds
 
 /**
  * Exercises the whole engine stack on a device.
@@ -186,7 +187,7 @@ class PuzzleEngineTest {
           assertTrue(saved.isNotEmpty())
 
           session.newGame()
-          session.deserialise(saved).let { assertEquals(null, it) }
+          assertEquals(null, session.deserialise(saved))
           assertEquals("a restored save is the same puzzle", original, session.gameId())
         }
       }
@@ -319,7 +320,7 @@ class PuzzleEngineTest {
           var painted = false
           repeat(20) {
             painted = session.tick() || painted
-            delay(16)
+            delay(16.milliseconds)
           }
           val afterTicks = session.framesPresented.get()
           assertTrue("tick() never reported painting", painted)

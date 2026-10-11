@@ -60,6 +60,7 @@ import uk.aylett.puzzles.engine.KeyHint
 import uk.aylett.puzzles.engine.PuzzleEngine
 import uk.aylett.puzzles.engine.PuzzleFrame
 import uk.aylett.puzzles.engine.PuzzleSession
+import kotlin.time.Duration.Companion.milliseconds
 
 /**
  * Covers the session lifecycle, which is where the races live: `init` and `onResume` both want a
@@ -314,10 +315,10 @@ class GameViewModelTest {
         PuzzleSession.SavedState(byteArrayOf(1), byteArrayOf())
 
       revision.value = 1
-      advanceTimeBy(AUTOSAVE_DEBOUNCE_MS - 1)
+      advanceTimeBy(AUTOSAVE_DEBOUNCE_INTERVAL - 1.milliseconds)
       coVerify(exactly = 0) { saves.save(any(), any()) }
 
-      advanceTimeBy(2)
+      advanceTimeBy(2.milliseconds)
       coVerify(exactly = 1) { saves.save("Test", any()) }
     }
 

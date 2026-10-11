@@ -54,7 +54,6 @@ import uk.aylett.puzzles.engine.ConfigForm
  * applies it via [onApply]. Errors from `applyConfig` are shown inline rather than dismissing the
  * dialog, since the whole point is to let the user fix the offending field and retry.
  */
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ConfigDialog(
   form: ConfigForm,

@@ -50,7 +50,6 @@ import uk.aylett.puzzles.PuzzlesApplication
 import uk.aylett.puzzles.data.AppPreferences
 import uk.aylett.puzzles.data.CustomPreset
 import uk.aylett.puzzles.data.CustomPresetStore
-import uk.aylett.puzzles.data.FailureReport
 import uk.aylett.puzzles.data.RecoveryStore
 import uk.aylett.puzzles.data.SavedGameStore
 import uk.aylett.puzzles.data.overlay
@@ -68,16 +67,19 @@ import uk.aylett.puzzles.engine.PuzzleEngine
 import uk.aylett.puzzles.engine.PuzzleSession
 import java.io.PrintWriter
 import java.io.StringWriter
+import kotlin.time.Duration
+import kotlin.time.Duration.Companion.milliseconds
+import kotlin.time.Duration.Companion.nanoseconds
 
 // How long a run of ticks must produce no visible change before the animation loop backs off from
 // vsync pacing to a slow poll — sized in time rather than frame count so it means the same thing
 // on a 60Hz and a 120Hz display. Below this, a couple of frames rounding to the same pixel mid
 // animation doesn't cause a visible stutter when it snaps back.
-private const val ANIMATION_IDLE_THRESHOLD_MS = 100L
+private val ANIMATION_IDLE_THRESHOLD = 100L.milliseconds
 
 // The slow-poll rate once backed off — fast enough to keep a ticking game clock (Mines, Inertia)
 // looking live, far below display refresh rate so it costs nothing while idle.
-private const val ANIMATION_BACKOFF_INTERVAL_MS = 200L
+private val ANIMATION_BACKOFF_INTERVAL = 200L.milliseconds
 
 private const val LOG_TAG = "GameViewModel"
 
@@ -268,7 +270,7 @@ class GameViewModel(
     val session: PuzzleSession
     var restored = false
     var restoreAttempted = false
-    var savedPrefs: ByteArray? = null
+    var savedPrefs: ByteArray?
     try {
       session = engine.openGame(gameIndex)
       this.session = session
@@ -358,7 +360,7 @@ class GameViewModel(
         // Debounced so a rotation animation's stream of intermediate sizes doesn't each trigger a
         // fresh (potentially multi-second) puzzle regeneration at that size.
         launch {
-          pendingSize.filterNotNull().debounce(150).collectLatest { (w, h, density) ->
+          pendingSize.filterNotNull().debounce(150.milliseconds).collectLatest { (w, h, density) ->
             guarded(session, "sizing the game", Unit) {
               it.resize(w, h, density)
               restoreMayConfirm = true
@@ -491,7 +493,7 @@ class GameViewModel(
   /**
    * Paces [PuzzleSession.tick] while [PuzzleSession.animating] is true: once per display frame
    * ([awaitFrame]) as long as ticks are producing visible changes, backing off to a slow poll
-   * ([ANIMATION_BACKOFF_INTERVAL_MS]) once a run of them hasn't ([ANIMATION_IDLE_THRESHOLD_MS]).
+   * ([ANIMATION_BACKOFF_INTERVAL]) once a run of them hasn't ([ANIMATION_IDLE_THRESHOLD]).
    * A tick handled inline elsewhere (a tap, say) sets the same dirty flag `tick()` reads, so it is
    * picked up on the next iteration and snaps the loop straight back to full rate — no separate
    * wake-up path needed for "refresh fast after input".
@@ -502,21 +504,21 @@ class GameViewModel(
    */
   private fun startAnimationLoop(session: PuzzleSession): Job =
     viewModelScope.launch {
-      var idleSinceNanos: Long? = null
+      var idleSinceNanos: Duration? = null
       while (isActive) {
         val changed = guarded(session, "animating", null) { it.tick() } ?: break
-        val now = System.nanoTime()
+        val now = System.nanoTime().nanoseconds
         idleSinceNanos =
           when {
             changed -> null
             idleSinceNanos == null -> now
             else -> idleSinceNanos
           }
-        val idleMillis = idleSinceNanos?.let { (now - it) / 1_000_000 } ?: 0L
-        if (idleMillis < ANIMATION_IDLE_THRESHOLD_MS) {
+        val idleMillis = idleSinceNanos?.let { now - it } ?: 0L.milliseconds
+        if (idleMillis < ANIMATION_IDLE_THRESHOLD) {
           awaitFrame()
         } else {
-          delay(ANIMATION_BACKOFF_INTERVAL_MS)
+          delay(ANIMATION_BACKOFF_INTERVAL)
         }
       }
     }

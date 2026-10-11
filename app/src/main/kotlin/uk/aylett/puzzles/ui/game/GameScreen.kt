@@ -56,6 +56,7 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -364,7 +365,7 @@ fun GameScreen(
   when (activeDialog) {
     ActiveDialog.PRESETS -> {
       var presets by remember { mutableStateOf<List<PresetEntry>>(emptyList()) }
-      var currentId by remember { mutableStateOf(-1) }
+      var currentId by remember { mutableIntStateOf(-1) }
       var currentSettings by remember { mutableStateOf<List<ConfigField>>(emptyList()) }
       val customPresets by remember { viewModel.customPresets() }.collectAsState(emptyList())
       LaunchedEffect(Unit) {

@@ -17,6 +17,9 @@ package uk.aylett.puzzles.engine
 
 import kotlin.math.abs
 import kotlin.math.cbrt
+import kotlin.math.cos
+import kotlin.math.pow
+import kotlin.math.sin
 import kotlin.math.sqrt
 
 /**
@@ -134,7 +137,7 @@ internal object PaletteTransform {
   ): Int {
     val h = Math.toRadians(hueDegrees.toDouble())
     return pack(
-      fromOklab(lightness, chroma * Math.cos(h).toFloat(), chroma * Math.sin(h).toFloat()),
+      fromOklab(lightness, chroma * cos(h).toFloat(), chroma * sin(h).toFloat()),
     )
   }
 
@@ -157,7 +160,7 @@ internal object PaletteTransform {
   }
 
   private fun toLinear(c: Float) =
-    if (c <= 0.04045f) c / 12.92f else Math.pow(((c + 0.055f) / 1.055f).toDouble(), 2.4).toFloat()
+    if (c <= 0.04045f) c / 12.92f else ((c + 0.055f) / 1.055f).toDouble().pow(2.4).toFloat()
 
   private fun toGamma(c: Float): Float {
     val v = c.coerceIn(0f, 1f)
@@ -166,7 +169,7 @@ internal object PaletteTransform {
     ) {
       v * 12.92f
     } else {
-      (1.055 * Math.pow(v.toDouble(), 1 / 2.4) - 0.055).toFloat()
+      (1.055 * v.toDouble().pow(1 / 2.4) - 0.055).toFloat()
     }
   }
 
@@ -189,9 +192,9 @@ internal object PaletteTransform {
     a: Float,
     b: Float,
   ): FloatArray {
-    val l = Math.pow((ll + 0.3963377774f * a + 0.2158037573f * b).toDouble(), 3.0).toFloat()
-    val m = Math.pow((ll - 0.1055613458f * a - 0.0638541728f * b).toDouble(), 3.0).toFloat()
-    val s = Math.pow((ll - 0.0894841775f * a - 1.2914855480f * b).toDouble(), 3.0).toFloat()
+    val l = (ll + 0.3963377774f * a + 0.2158037573f * b).toDouble().pow(3.0).toFloat()
+    val m = (ll - 0.1055613458f * a - 0.0638541728f * b).toDouble().pow(3.0).toFloat()
+    val s = (ll - 0.0894841775f * a - 1.2914855480f * b).toDouble().pow(3.0).toFloat()
     return floatArrayOf(
       toGamma(4.0767416621f * l - 3.3077115913f * m + 0.2309699292f * s),
       toGamma(-1.2684380046f * l + 2.6097574011f * m - 0.3413193965f * s),
