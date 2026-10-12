@@ -23,6 +23,7 @@ import androidx.activity.compose.PredictiveBackHandler
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.animation.core.Animatable
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.lazy.rememberLazyListState
@@ -42,7 +43,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.Flow
@@ -70,6 +73,9 @@ private const val PREDICTIVE_BACK_MIN_SCALE = 0.9f
 private val PREDICTIVE_BACK_MAX_TRANSLATION = 16.dp
 private val PREDICTIVE_BACK_MAX_CORNER_RADIUS = 32.dp
 
+// How far a leftward drag on the list must travel to bring back the game that was just left.
+private val REVEAL_GAME_DRAG_DISTANCE = 72.dp
+
 /** The app's single activity: it hosts the list, with one game or a menu screen on top. */
 class MainActivity : ComponentActivity() {
   override fun onCreate(savedInstanceState: Bundle?) {
@@ -93,6 +99,10 @@ class MainActivity : ComponentActivity() {
  * module's own index ordering could shift), so returning to the app after it was fully evicted
  * from memory reopens the same game rather than the launcher list. If that name is no longer
  * found among [uk.aylett.puzzles.engine.PuzzleEngine.games] the app falls back to the list.
+ *
+ * The open game is logically to the right of the list, as the last channel is in Slack: a leftward
+ * swipe on the list brings back the game most recently left. The reverse is deliberately absent —
+ * swiping within a game is puzzle input, and only back (or the system gesture) returns to the list.
  */
 @Composable
 private fun PuzzlesApp() {
@@ -121,6 +131,11 @@ private fun PuzzlesApp() {
     }
     return
   }
+
+  // The game to bring back with a leftward swipe on the list: whichever was last open.
+  var lastGame by rememberSaveable { mutableIntStateOf(NO_GAME_SELECTED) }
+  if (selectedGame != NO_GAME_SELECTED) lastGame = selectedGame
+  val revealDistancePx = with(LocalDensity.current) { REVEAL_GAME_DRAG_DISTANCE.toPx() }
 
   val backProgress = remember { Animatable(0f) }
   var swipeEdge by remember { mutableIntStateOf(BackEventCompat.EDGE_LEFT) }
@@ -163,7 +178,19 @@ private fun PuzzlesApp() {
     }
   }
 
-  Box(modifier = Modifier.fillMaxSize()) {
+  val canRevealGame = selectedGame == NO_GAME_SELECTED && lastGame != NO_GAME_SELECTED
+  Box(
+    modifier =
+      Modifier.fillMaxSize().pointerInput(canRevealGame, lastGame) {
+        if (!canRevealGame) return@pointerInput
+        var travelled = 0f
+        detectHorizontalDragGestures(
+          onDragStart = { travelled = 0f },
+          onDragCancel = { travelled = 0f },
+          onDragEnd = { if (travelled <= -revealDistancePx) selectedGame = lastGame },
+        ) { _, delta -> travelled += delta }
+      },
+  ) {
     // Kept underneath throughout the gesture so the list is what the shrinking game reveals.
     if (selectedGame == NO_GAME_SELECTED || backProgress.value > 0f) {
       GameListScreen(

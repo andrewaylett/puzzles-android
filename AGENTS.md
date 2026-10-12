@@ -554,6 +554,10 @@ Favourites (long-press a row) are stored by game name, like the last-played game
 top. "Settings" holds the two app-wide switches that also appear inline in the game screen; it is
 named so to keep it distinct from the per-puzzle "Preferences" dialog, which is the mid-end's.
 
+The game sits logically to the right of the list, as Slack's last channel does: a leftward drag
+on the list (`MainActivity`) reopens the game most recently left. There is deliberately no mirror
+gesture in the game, where horizontal drags are puzzle input; back is the only way out.
+
 ## Licences screen
 
 The About screen's licence list comes from AboutLibraries, whose Gradle plugin collects Maven
