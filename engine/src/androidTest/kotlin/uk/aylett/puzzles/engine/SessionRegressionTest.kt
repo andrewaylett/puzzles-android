@@ -302,4 +302,29 @@ class SessionRegressionTest {
         }
       }
     }
+
+  /**
+   * Whether a game was won is read straight after a restore, before the UI has sized it, to decide
+   * if it is worth resuming. The save carries the answer, but it has to reach the frame without a
+   * redraw, which waits for a size.
+   */
+  @Test
+  fun aRestoredWonGameReportsWonBeforeSizing() =
+    runBlocking {
+      PuzzleEngine.create(context).use { engine ->
+        val game = engine.games.first { it.name == "Solo" }
+        val save =
+          engine.openGame(game.index).use { session ->
+            session.newGame()
+            session.resize(600, 600)
+            session.solve()
+            assertEquals(GameStatus.WON, session.frames.value.status)
+            session.saveState()!!.game
+          }
+        engine.openGame(game.index).use { session ->
+          assertNull(session.deserialise(save))
+          assertEquals(GameStatus.WON, session.frames.value.status)
+        }
+      }
+    }
 }

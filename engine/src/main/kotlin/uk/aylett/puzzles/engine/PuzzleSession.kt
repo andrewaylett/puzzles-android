@@ -773,6 +773,10 @@ class PuzzleSession internal constructor(
           applyPalette()
           forceRedraw()
           redrawAndSync()
+          // Not part of the redraw above, which does nothing until the game is sized, and a restore
+          // comes first. The status needs no size, and the save already knows whether it was won,
+          // which the owner reads straight away to decide whether the game is worth resuming.
+          syncMeta()
         }
         error
       } finally {

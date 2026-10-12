@@ -311,6 +311,10 @@ What is accepted as lost on an instant kill is one debounce interval. Details wo
   can outlive its ViewModel and two must not share the temporary file.
 - A restore marker is cleared by a save only once the game has been laid out, or the player is
   leaving: an autosave just after restoring proves serialising works, not that drawing does.
+- A finished game is not resumed: `GameViewModel` reads the restored frame's status and generates
+  a new game with the same parameters instead. The win is not stored separately, as the save
+  already implies it, but `PuzzleSession.deserialise` must publish the status itself, because the
+  redraw that normally does so waits for a size and a restore comes first.
 - Timed puzzles serialise their elapsed time, so "ticks never change a save" is approximately true;
   the pause flush covers it.
 
