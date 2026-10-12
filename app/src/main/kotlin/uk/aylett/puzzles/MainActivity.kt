@@ -23,6 +23,7 @@ import androidx.activity.compose.PredictiveBackHandler
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.animate
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
@@ -33,7 +34,9 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -45,7 +48,6 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.Flow
@@ -73,8 +75,8 @@ private const val PREDICTIVE_BACK_MIN_SCALE = 0.9f
 private val PREDICTIVE_BACK_MAX_TRANSLATION = 16.dp
 private val PREDICTIVE_BACK_MAX_CORNER_RADIUS = 32.dp
 
-// How far a leftward drag on the list must travel to bring back the game that was just left.
-private val REVEAL_GAME_DRAG_DISTANCE = 72.dp
+// How much of the screen's width the game must have been dragged in for a release to commit to it.
+private const val REVEAL_GAME_COMMIT_FRACTION = 0.3f
 
 /** The app's single activity: it hosts the list, with one game or a menu screen on top. */
 class MainActivity : ComponentActivity() {
@@ -135,7 +137,9 @@ private fun PuzzlesApp() {
   // The game to bring back with a leftward swipe on the list: whichever was last open.
   var lastGame by rememberSaveable { mutableIntStateOf(NO_GAME_SELECTED) }
   if (selectedGame != NO_GAME_SELECTED) lastGame = selectedGame
-  val revealDistancePx = with(LocalDensity.current) { REVEAL_GAME_DRAG_DISTANCE.toPx() }
+  // How far the last game has been dragged in from the right, 0 (off screen) to 1 (in place).
+  var reveal by remember { mutableFloatStateOf(0f) }
+  val revealing by remember { derivedStateOf { reveal > 0f } }
 
   val backProgress = remember { Animatable(0f) }
   var swipeEdge by remember { mutableIntStateOf(BackEventCompat.EDGE_LEFT) }
@@ -183,12 +187,25 @@ private fun PuzzlesApp() {
     modifier =
       Modifier.fillMaxSize().pointerInput(canRevealGame, lastGame) {
         if (!canRevealGame) return@pointerInput
-        var travelled = 0f
+        val width = size.width.toFloat()
+
+        // Settling runs in the composition's scope: the gesture's own scope ends with the release.
+        fun settle(target: Float) {
+          coroutineScope.launch {
+            animate(reveal, target) { value, _ -> reveal = value }
+            if (target == 1f) {
+              selectedGame = lastGame
+              reveal = 0f
+            }
+          }
+        }
         detectHorizontalDragGestures(
-          onDragStart = { travelled = 0f },
-          onDragCancel = { travelled = 0f },
-          onDragEnd = { if (travelled <= -revealDistancePx) selectedGame = lastGame },
-        ) { _, delta -> travelled += delta }
+          onDragCancel = { settle(0f) },
+          onDragEnd = { settle(if (reveal >= REVEAL_GAME_COMMIT_FRACTION) 1f else 0f) },
+        ) { change, delta ->
+          change.consume()
+          reveal = (reveal - delta / width).coerceIn(0f, 1f)
+        }
       },
   ) {
     // Kept underneath throughout the gesture so the list is what the shrinking game reveals.
@@ -201,7 +218,7 @@ private fun PuzzlesApp() {
         listState = listState,
       )
     }
-    if (selectedGame != NO_GAME_SELECTED) {
+    if (selectedGame != NO_GAME_SELECTED || revealing) {
       val progress = backProgress.value
       val scale = 1f - (1f - PREDICTIVE_BACK_MIN_SCALE) * progress
       val edgeSign = if (swipeEdge == BackEventCompat.EDGE_RIGHT) -1f else 1f
@@ -211,10 +228,18 @@ private fun PuzzlesApp() {
             .graphicsLayer {
               scaleX = scale
               scaleY = scale
-              translationX = edgeSign * PREDICTIVE_BACK_MAX_TRANSLATION.toPx() * progress
+              translationX =
+                if (selectedGame == NO_GAME_SELECTED) {
+                  size.width * (1f - reveal)
+                } else {
+                  edgeSign * PREDICTIVE_BACK_MAX_TRANSLATION.toPx() * progress
+                }
             }.clip(RoundedCornerShape(PREDICTIVE_BACK_MAX_CORNER_RADIUS * progress)),
       ) {
-        GameScreen(gameIndex = selectedGame, onBack = { selectedGame = NO_GAME_SELECTED })
+        GameScreen(
+          gameIndex = if (selectedGame == NO_GAME_SELECTED) lastGame else selectedGame,
+          onBack = { selectedGame = NO_GAME_SELECTED },
+        )
       }
     }
   }
