@@ -51,21 +51,7 @@ fun FailureDialog(
     },
     confirmButton = {
       TextButton(onClick = {
-        val send =
-          Intent(Intent.ACTION_SEND).apply {
-            type = "text/plain"
-            putExtra(Intent.EXTRA_SUBJECT, report.summary)
-            val file = report.file
-            if (file != null) {
-              // A file, not EXTRA_TEXT: the report is long, and share targets such as Tailscale
-              // only take files. The provider grants the receiver read access to this one file.
-              putExtra(Intent.EXTRA_STREAM, reportUri(context, file))
-              addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-            } else {
-              putExtra(Intent.EXTRA_TEXT, report.text)
-            }
-          }
-        context.startActivity(Intent.createChooser(send, null))
+        shareReport(context, report.summary, report.file, report.text)
         onDismiss()
       }) { Text(stringResource(R.string.failure_share)) }
     },
@@ -79,3 +65,29 @@ private fun reportUri(
   context: Context,
   file: File,
 ) = FileProvider.getUriForFile(context, "${context.packageName}.reports", file)
+
+/**
+ * Offers a report to the system chooser. Used for a fresh failure and, from the status screen, for
+ * any kept since, so that not sharing it at the time does not lose it.
+ */
+fun shareReport(
+  context: Context,
+  summary: String,
+  file: File?,
+  text: String,
+) {
+  val send =
+    Intent(Intent.ACTION_SEND).apply {
+      type = "text/plain"
+      putExtra(Intent.EXTRA_SUBJECT, summary)
+      if (file != null) {
+        // A file, not EXTRA_TEXT: the report is long, and share targets such as Tailscale
+        // only take files. The provider grants the receiver read access to this one file.
+        putExtra(Intent.EXTRA_STREAM, reportUri(context, file))
+        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+      } else {
+        putExtra(Intent.EXTRA_TEXT, text)
+      }
+    }
+  context.startActivity(Intent.createChooser(send, null))
+}

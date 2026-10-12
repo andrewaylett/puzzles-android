@@ -86,6 +86,7 @@
   <string name="app_status_saves">Saved games: %1$s</string>
   <string name="app_status_recovery">%1$d failure reports, %2$d saves set aside</string>
   <string name="app_status_recovery_newest">Newest: %1$s</string>
+  <string name="app_status_report_detail">%1$s · %2$s</string>
   <string name="app_status_restore_markers">A restore of %1$s began and never finished.</string>
   <string name="app_status_section_puzzles">Puzzles</string>
   <string name="app_status_puzzles_empty">Nothing is stored for any puzzle yet.</string>

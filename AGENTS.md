@@ -472,7 +472,9 @@ only clearing storage ended. So:
   reloads from its last save — unless a restore was still unconfirmed, in which case the save is
   blamed, moved aside (never deleted: it is the only reproduction) and a fresh game generated.
   `RecoveryStore` keeps a few reports and quarantined saves, and the player is offered the report
-  to share. There is no network reporting; the app has no network access.
+  to share. Not sharing it is not losing it: the kept reports are listed on the App status screen,
+  newest first, and tapping one offers it to the chooser again.
+  There is no network reporting; the app has no network access.
 - A restore marker is written before restoring and cleared once the restored game has been laid out
   or saved. If it is still there at launch, the last attempt died in a way no handler could catch
   (out of memory, process killed), and the save is quarantined without being tried.

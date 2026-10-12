@@ -39,6 +39,17 @@ data class FailureReport(
   val file: File? = null,
 )
 
+/** One failure report kept on disk, as listed on the status screen. */
+data class StoredReport(
+  val file: File,
+  val gameName: String,
+  val summary: String,
+  /** When it was recorded, from the file name. */
+  val millis: Long,
+  /** Whether the unrestorable save was set aside with it. */
+  val savedGameKept: Boolean,
+)
+
 /** What [RecoveryStore] is holding, for diagnostics. */
 data class RecoverySummary(
   /** Failure reports kept, at most the store's limit. */
@@ -49,6 +60,8 @@ data class RecoverySummary(
   val newestReportMillis: Long?,
   /** Games whose restore started and never finished: the last launch died part way through one. */
   val restoreMarkers: List<String>,
+  /** The reports themselves, newest first. */
+  val history: List<StoredReport> = emptyList(),
 )
 
 /**
@@ -99,8 +112,29 @@ class RecoveryStore(
             .filter { it.name.startsWith(MARKER_PREFIX) }
             .map { it.readText() }
             .sorted(),
+        history = reports.sortedByDescending { it.name }.mapNotNull(::readReport),
       )
     }
+
+  /** Reads just the header [record] wrote; the rest of a report can be large. */
+  private fun readReport(file: File): StoredReport? {
+    val millis = file.name.substringBefore('-').toLongOrNull() ?: return null
+    val header =
+      try {
+        file.useLines { lines -> lines.take(HEADER_LINES).toList() }
+      } catch (_: IOException) {
+        return null
+      }
+
+    fun field(name: String) = header.firstOrNull { it.startsWith("$name: ") }?.substringAfter(": ")
+    return StoredReport(
+      file = file,
+      gameName = field("Game") ?: "?",
+      summary = field("Summary").orEmpty(),
+      millis = millis,
+      savedGameKept = File(file.parentFile, file.name.removeSuffix(".txt") + ".sav").exists(),
+    )
+  }
 
   /**
    * Writes the report (and [save], if any) to storage and returns it for display.
@@ -158,6 +192,7 @@ class RecoveryStore(
 
   private companion object {
     const val MARKER_PREFIX = "restoring-"
+    const val HEADER_LINES = 4
     const val MAX_REPORTS = 5
     const val MAX_EMBEDDED_SAVE = 64 * 1024
   }

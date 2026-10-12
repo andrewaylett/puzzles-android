@@ -19,6 +19,7 @@ import android.app.Application
 import android.text.format.DateUtils
 import android.text.format.Formatter
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -30,6 +31,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Extension
+import androidx.compose.material.icons.filled.Share
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
@@ -55,6 +57,7 @@ import uk.aylett.puzzles.EngineStatus
 import uk.aylett.puzzles.R
 import uk.aylett.puzzles.pool.PoolJob
 import uk.aylett.puzzles.pool.PoolJobKind
+import uk.aylett.puzzles.ui.game.dialogs.shareReport
 import uk.aylett.puzzles.ui.list.iconFor
 
 /**
@@ -147,6 +150,26 @@ fun AppStatusScreen(
         recovery.newestReportMillis?.let {
           Line(stringResource(R.string.app_status_recovery_newest, ago(it)))
         }
+      }
+      items(state.recovery.history, key = { it.file.name }) { report ->
+        ListItem(
+          modifier =
+            Modifier.clickable {
+              shareReport(context, report.summary, report.file, report.file.readText())
+            },
+          headlineContent = { Text(report.gameName) },
+          supportingContent = {
+            Text(
+              stringResource(R.string.app_status_report_detail, ago(report.millis), report.summary),
+            )
+          },
+          trailingContent = {
+            Icon(
+              Icons.Filled.Share,
+              contentDescription = stringResource(R.string.failure_share),
+            )
+          },
+        )
       }
       items(state.recovery.restoreMarkers) { game ->
         Line(

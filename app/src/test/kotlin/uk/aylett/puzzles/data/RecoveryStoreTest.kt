@@ -91,12 +91,31 @@ class RecoveryStoreTest {
   fun `the summary counts reports and saves, and names a restore that never finished`() =
     runTest {
       val s = store()
-      assertEquals(RecoverySummary(0, 0, null, emptyList()), s.summary())
+      assertEquals(RecoverySummary(0, 0, null, emptyList(), emptyList()), s.summary())
 
       s.record("Solo", "broke", "trace", byteArrayOf(1), true, nowMillis = 1_000)
       s.record("Net", "broke", "trace", null, false, nowMillis = 2_000)
       s.markRestoring("Train Tracks")
 
-      assertEquals(RecoverySummary(2, 1, 2_000L, listOf("Train Tracks")), s.summary())
+      val summary = s.summary()
+      assertEquals(2, summary.reports)
+      assertEquals(1, summary.quarantinedSaves)
+      assertEquals(2_000L, summary.newestReportMillis)
+      assertEquals(listOf("Train Tracks"), summary.restoreMarkers)
+    }
+
+  @Test
+  fun `the history lists each kept report newest first, with what it says about itself`() =
+    runTest {
+      val s = store()
+      s.record("Solo", "first", "trace", byteArrayOf(1), true, nowMillis = 1_000)
+      s.record("Train Tracks", "second", "trace", null, false, nowMillis = 2_000)
+
+      val history = s.summary().history
+      assertEquals(listOf("Train Tracks", "Solo"), history.map { it.gameName })
+      assertEquals(listOf("second", "first"), history.map { it.summary })
+      assertEquals(listOf(2_000L, 1_000L), history.map { it.millis })
+      assertEquals(listOf(false, true), history.map { it.savedGameKept })
+      assertTrue(history.all { it.file.readText().contains("trace") })
     }
 }
