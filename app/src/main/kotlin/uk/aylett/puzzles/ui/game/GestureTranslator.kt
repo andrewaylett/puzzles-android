@@ -112,4 +112,18 @@ internal class GestureTranslator(
     }
     finished = true
   }
+
+  /**
+   * The system took the gesture away (the back gesture, say) so there will be no release. A button
+   * already down in the mid-end is released where the finger last was, or it would stay held; a
+   * gesture that never got as far as a button sends nothing, as it was never a tap.
+   */
+  fun cancel(
+    x: Float,
+    y: Float,
+  ) {
+    val button = activeButton
+    if (!finished && button != null) send(PointerAction.UP, button, x, y)
+    finished = true
+  }
 }

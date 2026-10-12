@@ -28,7 +28,8 @@
 -->
 <manifest
   xmlns:android="http://schemas.android.com/apk/res/android"
-  xmlns:tools="http://schemas.android.com/tools">
+  xmlns:tools="http://schemas.android.com/tools"
+  tools:targetApi="33">
 
   <!--
     WorkManager declares these for features we do not use (network-constrained work and

@@ -175,6 +175,39 @@ class GestureTranslatorTest {
     assertEquals(emptyList<Sent>(), sent)
   }
 
+  @Test
+  fun `cancelling a drag releases the button where the finger was`() {
+    val t = translator()
+    t.down(0f, 0f)
+    t.move(SLOP + 1, 0f)
+    sent.clear()
+    t.cancel(20f, 5f)
+
+    assertEquals(listOf(Sent(UP, LEFT, 20f, 5f)), sent)
+    assertFalse(t.isUndecided)
+  }
+
+  @Test
+  fun `cancelling before any button is down sends nothing`() {
+    val t = translator()
+    t.down(0f, 0f)
+    t.cancel(0f, 0f)
+
+    assertEquals(emptyList<Sent>(), sent)
+    assertFalse(t.isUndecided)
+  }
+
+  @Test
+  fun `cancelling after release sends nothing more`() {
+    val t = translator()
+    t.down(0f, 0f)
+    t.up(0f, 0f)
+    sent.clear()
+    t.cancel(0f, 0f)
+
+    assertEquals(emptyList<Sent>(), sent)
+  }
+
   private companion object {
     const val SLOP = 8f
   }

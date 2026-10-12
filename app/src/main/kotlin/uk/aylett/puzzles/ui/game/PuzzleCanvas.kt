@@ -36,7 +36,6 @@ import androidx.compose.ui.input.pointer.AwaitPointerEventScope
 import androidx.compose.ui.input.pointer.PointerEventTimeoutCancellationException
 import androidx.compose.ui.input.pointer.PointerId
 import androidx.compose.ui.input.pointer.PointerInputChange
-import androidx.compose.ui.input.pointer.changedToUp
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
@@ -120,34 +119,47 @@ fun PuzzleCanvas(
             translator.down(down.position.x, down.position.y)
 
             var released = false
+            var lastX = down.position.x
+            var lastY = down.position.y
             try {
-              withTimeout(viewConfiguration.longPressTimeoutMillis) {
-                while (translator.isUndecided) {
-                  val change = nextChange(down.id) ?: continue
-                  if (change.changedToUp()) {
-                    translator.up(change.position.x, change.position.y)
-                    released = true
-                  } else {
-                    translator.move(change.position.x, change.position.y)
+              try {
+                withTimeout(viewConfiguration.longPressTimeoutMillis) {
+                  while (translator.isUndecided) {
+                    // No change for our pointer, or one no longer pressed, means the gesture is
+                    // over. A cancelled gesture (the system back gesture claiming the touch) can
+                    // arrive as either, and waiting for a clean release that never comes would
+                    // leave this handler stuck and every later touch ignored.
+                    val change = nextChange(down.id)
+                    if (change == null || !change.pressed) {
+                      if (change != null) translator.up(change.position.x, change.position.y)
+                      released = true
+                      break
+                    }
+                    lastX = change.position.x
+                    lastY = change.position.y
+                    translator.move(lastX, lastY)
                   }
                 }
+              } catch (_: PointerEventTimeoutCancellationException) {
+                // Outlasted the timeout while still down and within the slop: a long press.
+                translator.longPressElapsed()
               }
-            } catch (_: PointerEventTimeoutCancellationException) {
-              // Outlasted the timeout while still down and within the slop: a long press.
-              translator.longPressElapsed()
-            }
 
-            // Consumption is checked before it happens, not after: changedToUp is gated on
-            // !isConsumed, so consuming first would hide the real release and wait forever.
-            while (!released) {
-              val change = nextChange(down.id) ?: continue
-              released = change.changedToUp()
-              change.consume()
-              if (released) {
-                translator.up(change.position.x, change.position.y)
-              } else {
-                translator.move(change.position.x, change.position.y)
+              while (!released) {
+                val change = nextChange(down.id)
+                if (change == null || !change.pressed) {
+                  if (change != null) translator.up(change.position.x, change.position.y)
+                  released = true
+                  break
+                }
+                change.consume()
+                lastX = change.position.x
+                lastY = change.position.y
+                translator.move(lastX, lastY)
               }
+            } finally {
+              // Also covers this coroutine being cancelled outright. A no-op after a normal release.
+              translator.cancel(lastX, lastY)
             }
           }
         },
@@ -189,6 +201,6 @@ private fun bitmapOffset(
     ((canvasSize.height - bitmapHeight) / 2).toFloat(),
   )
 
-/** The next change for [pointerId], skipping events that only concern other pointers. */
+/** The next event's change for [pointerId], or null if that pointer is no longer in it. */
 private suspend fun AwaitPointerEventScope.nextChange(pointerId: PointerId): PointerInputChange? =
   awaitPointerEvent().changes.firstOrNull { it.id == pointerId }
