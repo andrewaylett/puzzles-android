@@ -16,7 +16,7 @@ junit = "5.14.4"
 androidxTestJunit = "1.3.0"
 espresso = "3.7.0"
 mockk = "1.14.11"
-aboutlibraries = "15.2.0"
+aboutlibraries = "15.3.0"
 
 [libraries]
 chicory-runtime = { module = "com.dylibso.chicory:runtime", version.ref = "chicory" }
